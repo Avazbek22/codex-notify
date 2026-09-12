@@ -1,0 +1,34 @@
+{
+  "accountId": "acct_fixture_redacted",
+  "rateLimits": {
+    "limitId": "codex",
+    "limitName": null,
+    "primary": {"usedPercent": 25, "windowDurationMins": 15, "resetsAt": 1781654400},
+    "secondary": null,
+    "rateLimitReachedType": null
+  },
+  "rateLimitsByLimitId": {
+    "codex": {
+      "limitId": "codex",
+      "limitName": null,
+      "primary": {"usedPercent": 25, "windowDurationMins": 15, "resetsAt": 1781654400},
+      "secondary": null,
+      "rateLimitReachedType": null
+    }
+  },
+  "ordinaryUsageAllowed": true,
+  "rateLimitResetCredits": {
+    "availableCount": 2,
+    "credits": [
+      {
+        "id": "RateLimitResetCredit_fixture_1",
+        "resetType": "codexRateLimits",
+        "status": "available",
+        "grantedAt": 1781654400,
+        "expiresAt": 1784246400,
+        "title": "Rate-limit reset",
+        "description": "Reset an eligible Codex rate-limit window."
+      }
+    ]
+  }
+}

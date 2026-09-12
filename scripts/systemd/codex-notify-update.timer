@@ -1,0 +1,12 @@
+[Unit]
+Description=Check the CI-approved Codex Notify deploy ref
+
+[Timer]
+OnBootSec=5m
+OnUnitActiveSec=1h
+RandomizedDelaySec=15m
+Persistent=true
+Unit=codex-notify-update.service
+
+[Install]
+WantedBy=timers.target

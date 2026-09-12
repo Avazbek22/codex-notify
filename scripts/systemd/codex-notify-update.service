@@ -1,0 +1,21 @@
+[Unit]
+Description=Deploy the latest CI-approved Codex Notify commit
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=__INSTALL_DIR__
+Environment=ROOT_DIR=__INSTALL_DIR__
+Environment=COMPOSE_PROJECT=__COMPOSE_PROJECT__
+Environment=SERVICE_KEY=codex-notify
+ExecStart=/usr/bin/env bash __INSTALL_DIR__/scripts/deploy.sh
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=__INSTALL_DIR__ /run/lock
+
+[Install]
+WantedBy=multi-user.target

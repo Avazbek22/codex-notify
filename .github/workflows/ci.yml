@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - run: python -m pip install --require-hashes -r requirements-dev.txt
+      - run: python -m ruff check .
+      - run: python -m ruff format --check .
+      - run: python -m mypy codex_notify
+      - run: python -m pytest
+
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test deployment scripts
+        run: |
+          for script in install.sh scripts/*.sh tests/shell/*.sh; do bash -n "$script"; done
+          for test_script in tests/shell/test-*.sh; do bash "$test_script"; done
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: codex-notify:test
+
+  promote:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [python, container]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Advance deploy only to the newest successfully checked main SHA
+        env:
+          CANDIDATE: ${{ github.sha }}
+        run: |
+          git fetch origin main deploy 2>/dev/null || git fetch origin main
+          test "$CANDIDATE" = "$(git rev-parse refs/remotes/origin/main)" || exit 0
+          if git show-ref --verify --quiet refs/remotes/origin/deploy; then
+            git merge-base --is-ancestor refs/remotes/origin/deploy "$CANDIDATE"
+          fi
+          git push origin "$CANDIDATE:refs/heads/deploy"
