@@ -36,6 +36,10 @@ def test_ci_promotes_only_successful_newest_main_without_force() -> None:
     assert "merge-base --is-ancestor" in workflow
     assert "--force" not in workflow
     assert "pull_request_target" not in workflow
+    assert "uses: actions/checkout@v" not in workflow
+    assert "uses: actions/setup-python@v" not in workflow
+    assert "uses: docker/setup-buildx-action@v" not in workflow
+    assert "uses: docker/build-push-action@v" not in workflow
 
 
 def test_updater_preserves_auth_and_has_schema_aware_rollback() -> None:
