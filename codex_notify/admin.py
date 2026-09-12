@@ -8,11 +8,16 @@ from .binding import create_binding, set_owner
 from .instance_lock import InstanceLock
 from .models import SCHEMA_VERSION
 from .storage import Repository
+from .validate_data import validate_data
 
 
 async def _run(arguments: argparse.Namespace) -> None:
     data_dir = Path(arguments.data_dir)
     with InstanceLock(data_dir / "instance.lock"):
+        if arguments.command == "validate-data":
+            validate_data(data_dir)
+            print(f"JSON schema is compatible with application version {SCHEMA_VERSION}")
+            return
         repository = Repository(data_dir)
         await repository.initialize()
         if arguments.command == "binding-link":
@@ -21,8 +26,6 @@ async def _run(arguments: argparse.Namespace) -> None:
         elif arguments.command == "set-owner":
             await set_owner(repository.settings, arguments.telegram_id)
             print("Telegram owner configured")
-        elif arguments.command == "validate-data":
-            print(f"JSON schema version {SCHEMA_VERSION} is valid")
 
 
 def parser() -> argparse.ArgumentParser:

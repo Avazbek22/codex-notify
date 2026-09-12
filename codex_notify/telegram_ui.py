@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import html
+import logging
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from aiogram import Bot, Router
@@ -12,6 +13,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
     BotCommand,
+    BotCommandScopeChat,
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -20,25 +22,29 @@ from aiogram.types import (
     ReplyKeyboardMarkup,
 )
 
+from .access import OwnerAccessMiddleware
 from .binding import consume_binding
 from .codex_rpc import CodexAppServer
 from .config import AppConfig
 from .delivery import OutboxDelivery
+from .i18n import SUPPORTED_LANGUAGES, has_translation, tr
 from .login import DeviceLogin, LoginAlreadyRunning, LoginManager, login_callback_tag
-from .models import AppState, NotificationSettings, RateSnapshot, Settings
+from .models import AppState, Language, NotificationSettings, Settings
 from .monitor import Monitor
+from .presentation import format_datetime, render_details, render_event, render_status
 from .storage import Repository
-from .timeutil import from_unix, parse_utc
 from .update_status import read_update_status
 
-MAIN_BUTTONS = {
-    "📊 Статус": "status",
-    "🔄 Проверить сейчас": "check",
-    "⚙️ Настройки": "settings",
-    "🕘 История": "history",
-    "👤 Аккаунт": "account",
-    "❓ Помощь": "help",
+_COMMAND_ACTIONS = {
+    "/status": "status",
+    "/check": "check",
+    "/settings": "settings",
+    "/history": "history",
+    "/account": "account",
+    "/help": "help",
+    "/diagnostics": "diagnostics",
 }
+_LOGGER = logging.getLogger(__name__)
 
 
 class InputState(StatesGroup):
@@ -46,110 +52,81 @@ class InputState(StatesGroup):
     timezone = State()
 
 
-def main_keyboard() -> ReplyKeyboardMarkup:
+def _button_actions() -> dict[str, str]:
+    actions: dict[str, str] = {}
+    for language in SUPPORTED_LANGUAGES:
+        actions.update(
+            {
+                tr(language, "menu.status"): "status",
+                tr(language, "menu.check"): "check",
+                tr(language, "menu.settings"): "settings",
+                tr(language, "menu.history"): "history",
+                tr(language, "menu.account"): "account",
+                tr(language, "menu.help"): "help",
+                tr(language, "legacy.menu.check.v1"): "check",
+            }
+        )
+    return actions
+
+
+MAIN_BUTTONS = _button_actions()
+
+
+def main_keyboard(language: Language) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="📊 Статус"), KeyboardButton(text="🔄 Проверить сейчас")],
-            [KeyboardButton(text="⚙️ Настройки"), KeyboardButton(text="🕘 История")],
-            [KeyboardButton(text="👤 Аккаунт"), KeyboardButton(text="❓ Помощь")],
+            [
+                KeyboardButton(text=tr(language, "menu.status")),
+                KeyboardButton(text=tr(language, "menu.check")),
+            ],
+            [
+                KeyboardButton(text=tr(language, "menu.settings")),
+                KeyboardButton(text=tr(language, "menu.history")),
+            ],
+            [
+                KeyboardButton(text=tr(language, "menu.account")),
+                KeyboardButton(text=tr(language, "menu.help")),
+            ],
         ],
         resize_keyboard=True,
         is_persistent=True,
     )
 
 
-def _format_datetime(value: str | None, timezone: str) -> str:
-    parsed = parse_utc(value)
-    if parsed is None:
-        return "нет данных"
-    return parsed.astimezone(ZoneInfo(timezone)).strftime("%d.%m.%Y %H:%M %Z")
-
-
-def _format_unix(value: int | None, timezone: str) -> str:
-    parsed = from_unix(value)
-    if parsed is None:
-        return "не указано"
-    return parsed.astimezone(ZoneInfo(timezone)).strftime("%d.%m.%Y %H:%M %Z")
-
-
-def render_status(settings: Settings, state: AppState) -> str:
-    lines = ["📊 <b>Codex Notify</b>"]
-    if state.auth_status == "connected":
-        lines.append("Подключение: ✅ активно")
-    elif state.auth_status == "reauth_required":
-        lines.append("Подключение: 🔐 нужен повторный вход")
-    else:
-        lines.append("Подключение: не настроено")
-    if state.account:
-        if state.account.masked_email:
-            lines.append(f"Аккаунт: <code>{html.escape(state.account.masked_email)}</code>")
-        if state.account.plan:
-            lines.append(f"План: {html.escape(state.account.plan)}")
-
-    snapshot = state.snapshot
-    if snapshot:
-        lines.append("")
-        lines.extend(_render_snapshot(snapshot, settings.timezone))
-    else:
-        lines.extend(["", "Достоверных показаний пока нет."])
-    if state.last_error:
-        lines.extend(["", "⚠️ Сохранённые данные устарели.", html.escape(state.last_error)])
-    lines.extend(
-        [
-            "",
-            f"Последняя успешная проверка: {_format_datetime(state.last_success_at, settings.timezone)}",
-            f"Следующая попытка: {_format_datetime(state.next_check_at, settings.timezone)}",
-            f"Мониторинг: {'⏸ пауза' if settings.paused else '▶️ включён'} · {settings.interval_minutes} мин",
+def status_keyboard(language: Language) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=tr(language, "status.refresh"), callback_data="v2:refresh"
+                ),
+                InlineKeyboardButton(
+                    text=tr(language, "status.details"), callback_data="v2:details"
+                ),
+            ]
         ]
     )
-    return "\n".join(lines)
 
 
-def _render_snapshot(snapshot: RateSnapshot, timezone: str) -> list[str]:
-    lines: list[str] = []
-    if not snapshot.buckets:
-        lines.append("Окна лимитов: данные не предоставлены.")
-    for bucket in snapshot.buckets:
-        label = html.escape(bucket.limit_name or bucket.limit_id)
-        if not bucket.windows:
-            if bucket.unlimited is True:
-                lines.append(f"♾ <b>{label}</b>: без ограничения")
-            else:
-                lines.append(f"• <b>{label}</b>: параметры окна не предоставлены")
-        for window in bucket.windows:
-            kind = "основное" if window.window == "primary" else "дополнительное"
-            remaining = max(0, 100 - window.used_percent)
-            duration = (
-                f", окно {window.window_duration_mins} мин"
-                if window.window_duration_mins is not None
-                else ""
-            )
-            lines.append(
-                f"• <b>{label}</b> ({kind}{duration}): использовано {window.used_percent}%, "
-                f"осталось {remaining}%"
-            )
-            lines.append(f"  Сброс: {_format_unix(window.resets_at, timezone)}")
-        if bucket.reached_type:
-            lines.append(f"  Ограничение backend: {html.escape(bucket.reached_type)}")
+def details_keyboard(language: Language) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=tr(language, "settings.back"), callback_data="v2:status")]
+        ]
+    )
 
-    if snapshot.ordinary_usage_status == "known":
-        allowed = "доступно" if snapshot.ordinary_usage_allowed else "заблокировано"
-        lines.append(f"Обычное использование: {allowed}")
-    else:
-        lines.append("Обычное использование: неизвестно")
 
-    if snapshot.reset_credits_status == "known":
-        lines.append(f"Reset-кредиты: {snapshot.reset_credits_available}")
-        for credit in snapshot.reset_credit_details or []:
-            if credit.status != "available":
-                continue
-            expiry = _format_unix(credit.expires_at, timezone)
-            lines.append(f"  • {html.escape(credit.title or 'Reset-кредит')} · до {expiry}")
-    elif snapshot.reset_credits_status == "unknown":
-        lines.append("Reset-кредиты: временно неизвестно")
-    else:
-        lines.append("Reset-кредиты: не поддерживаются ответом сервера")
-    return lines
+def _commands(language: Language) -> list[BotCommand]:
+    return [
+        BotCommand(command="status", description=tr(language, "command.status")),
+        BotCommand(command="check", description=tr(language, "command.check")),
+        BotCommand(command="settings", description=tr(language, "command.settings")),
+        BotCommand(command="history", description=tr(language, "command.history")),
+        BotCommand(command="account", description=tr(language, "command.account")),
+        BotCommand(command="diagnostics", description=tr(language, "command.diagnostics")),
+        BotCommand(command="help", description=tr(language, "command.help")),
+        BotCommand(command="cancel", description=tr(language, "command.cancel")),
+    ]
 
 
 class TelegramUI:
@@ -171,6 +148,9 @@ class TelegramUI:
         self.delivery = delivery
         self.config = config
         self.router = Router(name="codex-notify")
+        access = OwnerAccessMiddleware(repository)
+        self.router.message.outer_middleware(access)
+        self.router.callback_query.outer_middleware(access)
         self._tasks: set[asyncio.Task[None]] = set()
         self._register()
 
@@ -183,39 +163,44 @@ class TelegramUI:
         self.router.callback_query.register(self.handle_callback)
 
     async def register_commands(self) -> None:
-        await self.bot.set_my_commands(
-            [
-                BotCommand(command="status", description="Показать лимиты"),
-                BotCommand(command="check", description="Проверить сейчас"),
-                BotCommand(command="settings", description="Настройки мониторинга"),
-                BotCommand(command="history", description="История событий"),
-                BotCommand(command="account", description="Подключение Codex"),
-                BotCommand(command="diagnostics", description="Безопасная диагностика"),
-                BotCommand(command="help", description="Помощь"),
-                BotCommand(command="cancel", description="Отменить ввод"),
-            ]
-        )
+        # Earlier releases installed commands globally. Remove that scope so strangers see none.
+        await self.bot.delete_my_commands()
+        settings = await self.repository.settings.get()
+        if settings.owner_id is not None:
+            try:
+                await self.bot.set_my_commands(
+                    _commands(settings.language),
+                    scope=BotCommandScopeChat(chat_id=settings.owner_id),
+                )
+            except TelegramBadRequest:
+                # A directly configured owner may not have opened the bot yet. Polling must still
+                # start; /start retries registration after Telegram knows the private chat.
+                _LOGGER.info(
+                    "Owner-scoped commands will be registered after the owner opens the bot"
+                )
 
     async def _authorized_message(self, message: Message) -> bool:
         settings = await self.repository.settings.get()
-        private = message.chat.type == "private"
         user = message.from_user
-        allowed = private and settings.owner_id is not None and user is not None
-        allowed = allowed and user is not None and user.id == settings.owner_id
-        if not allowed:
-            await message.answer("Доступ закрыт.")
-        return bool(allowed)
+        return bool(
+            message.chat.type == "private"
+            and settings.owner_id is not None
+            and user is not None
+            and user.id == settings.owner_id
+        )
 
     async def _authorized_callback(self, query: CallbackQuery) -> bool:
         settings = await self.repository.settings.get()
         message = query.message
-        private = message is not None and message.chat.type == "private"
-        allowed = (
-            private and settings.owner_id is not None and query.from_user.id == settings.owner_id
+        allowed = bool(
+            message is not None
+            and message.chat.type == "private"
+            and settings.owner_id is not None
+            and query.from_user.id == settings.owner_id
         )
         if not allowed:
-            await query.answer("Доступ закрыт.", show_alert=True)
-        return bool(allowed)
+            await query.answer()
+        return allowed
 
     async def handle_start(self, message: Message) -> None:
         settings = await self.repository.settings.get()
@@ -228,91 +213,102 @@ class TelegramUI:
             and argument.startswith("claim_")
         ):
             accepted = await consume_binding(
-                self.repository.settings, argument.removeprefix("claim_"), message.from_user.id
+                self.repository.settings,
+                argument.removeprefix("claim_"),
+                message.from_user.id,
             )
             if accepted:
+                settings = await self.repository.settings.get()
+                await self.register_commands()
                 await message.answer(
-                    "✅ Этот Telegram-аккаунт назначен владельцем. Теперь откройте «Аккаунт» и "
-                    "подключите Codex.",
-                    reply_markup=main_keyboard(),
+                    tr(settings.language, "start.bound"),
+                    reply_markup=main_keyboard(settings.language),
                 )
                 return
         if not await self._authorized_message(message):
             return
+        settings = await self.repository.settings.get()
+        await self.register_commands()
         await message.answer(
-            "Здравствуйте! Я отслеживаю лимиты одного Codex-аккаунта. Выберите действие:",
-            reply_markup=main_keyboard(),
+            tr(settings.language, "start.welcome"),
+            reply_markup=main_keyboard(settings.language),
         )
 
     async def handle_cancel_input(self, message: Message, state: FSMContext) -> None:
         if not await self._authorized_message(message):
             return
+        settings = await self.repository.settings.get()
         await state.clear()
-        await message.answer("Ввод отменён.", reply_markup=main_keyboard())
+        await message.answer(
+            tr(settings.language, "input.cancelled"),
+            reply_markup=main_keyboard(settings.language),
+        )
 
     async def handle_interval_input(self, message: Message, state: FSMContext) -> None:
         if not await self._authorized_message(message):
             return
+        settings = await self.repository.settings.get()
         value = (message.text or "").strip()
         if not value.isdecimal() or not 5 <= int(value) <= 1440:
-            await message.answer("Введите целое число от 5 до 1440 или /cancel.")
+            await message.answer(tr(settings.language, "input.interval_invalid"))
             return
         minutes = int(value)
 
-        def update(settings: Settings) -> None:
-            settings.interval_minutes = minutes
+        def update(current: Settings) -> None:
+            current.interval_minutes = minutes
 
-        await self.repository.settings.mutate(update)
+        settings = await self.repository.settings.mutate(update)
         await state.clear()
         self.monitor.settings_changed()
         with contextlib.suppress(TelegramBadRequest):
             await message.delete()
-        await message.answer(f"Интервал изменён: {minutes} мин.", reply_markup=main_keyboard())
+        await message.answer(
+            tr(settings.language, "input.interval_changed", minutes=minutes),
+            reply_markup=main_keyboard(settings.language),
+        )
 
     async def handle_timezone_input(self, message: Message, state: FSMContext) -> None:
         if not await self._authorized_message(message):
             return
+        settings = await self.repository.settings.get()
         value = (message.text or "").strip()
         try:
             ZoneInfo(value)
         except ZoneInfoNotFoundError:
-            await message.answer("Неизвестная IANA timezone. Пример: Europe/Moscow. Или /cancel.")
+            await message.answer(tr(settings.language, "input.timezone_invalid"))
             return
 
-        def update(settings: Settings) -> None:
-            settings.timezone = value
+        def update(current: Settings) -> None:
+            current.timezone = value
 
-        await self.repository.settings.mutate(update)
+        settings = await self.repository.settings.mutate(update)
         await state.clear()
         with contextlib.suppress(TelegramBadRequest):
             await message.delete()
-        await message.answer(f"Часовой пояс: {html.escape(value)}.", reply_markup=main_keyboard())
+        await message.answer(
+            tr(settings.language, "input.timezone_changed", timezone=html.escape(value)),
+            reply_markup=main_keyboard(settings.language),
+        )
 
     async def handle_message(self, message: Message) -> None:
         if not await self._authorized_message(message):
             return
+        settings = await self.repository.settings.get()
         text = message.text or ""
         command = text.split()[0].split("@")[0].lower() if text.startswith("/") else ""
-        action = MAIN_BUTTONS.get(text)
-        command_map = {
-            "/status": "status",
-            "/check": "check",
-            "/settings": "settings",
-            "/history": "history",
-            "/account": "account",
-            "/help": "help",
-            "/diagnostics": "diagnostics",
-        }
-        action = action or command_map.get(command)
+        action = MAIN_BUTTONS.get(text) or _COMMAND_ACTIONS.get(command)
         if action == "status":
             await self.show_status(message)
         elif action == "check":
-            waiting = await message.answer("Проверяю…")
+            waiting = await message.answer(tr(settings.language, "check.checking"))
             result = await self.monitor.check_now(manual=True)
             self.delivery.wake()
             settings = await self.repository.settings.get()
-            state = await self.repository.state.get()
-            await waiting.edit_text(f"{result.message}\n\n{render_status(settings, state)}")
+            app_state = await self.repository.state.get()
+            await waiting.edit_text(
+                self._checked_status(settings, app_state, result.message_key),
+                reply_markup=status_keyboard(settings.language),
+            )
         elif action == "settings":
             await message.answer(
                 await self.settings_text(), reply_markup=await self.settings_keyboard()
@@ -326,28 +322,52 @@ class TelegramUI:
         elif action == "diagnostics":
             await message.answer(await self.diagnostics_text())
         elif action == "help":
-            await message.answer(self.help_text(), reply_markup=main_keyboard())
+            await message.answer(
+                tr(settings.language, "help.text"),
+                reply_markup=main_keyboard(settings.language),
+            )
         else:
-            await message.answer("Используйте кнопки меню.", reply_markup=main_keyboard())
+            await message.answer(
+                tr(settings.language, "input.use_buttons"),
+                reply_markup=main_keyboard(settings.language),
+            )
 
     async def show_status(self, message: Message) -> None:
+        settings = await self.repository.settings.get()
         await message.answer(
-            render_status(await self.repository.settings.get(), await self.repository.state.get())
+            render_status(settings, await self.repository.state.get()),
+            reply_markup=status_keyboard(settings.language),
         )
+
+    @staticmethod
+    def _checked_status(settings: Settings, state: AppState, message_key: str) -> str:
+        status = render_status(settings, state)
+        if message_key == "check.updated":
+            return status
+        return f"{tr(settings.language, message_key)}\n\n{status}"
 
     async def settings_text(self) -> str:
         settings = await self.repository.settings.get()
-        return (
-            "⚙️ <b>Настройки</b>\n"
-            f"Интервал: {settings.interval_minutes} мин\n"
-            f"Часовой пояс: {html.escape(settings.timezone)}\n"
-            f"Мониторинг: {'пауза' if settings.paused else 'включён'}\n\n"
-            "Уведомления переключаются кнопками ниже."
+        language = settings.language
+        monitoring_key = (
+            "settings.monitoring_paused" if settings.paused else "settings.monitoring_on"
+        )
+        return "\n".join(
+            [
+                tr(language, "settings.title"),
+                tr(language, "settings.interval", minutes=settings.interval_minutes),
+                tr(language, "settings.timezone", timezone=html.escape(settings.timezone)),
+                tr(language, "settings.language"),
+                tr(language, monitoring_key),
+                "",
+                tr(language, "settings.notifications_hint"),
+            ]
         )
 
     async def settings_keyboard(self) -> InlineKeyboardMarkup:
         settings = await self.repository.settings.get()
-        n = settings.notifications
+        language = settings.language
+        notifications = settings.notifications
 
         def mark(enabled: bool) -> str:
             return "✅" if enabled else "▫️"
@@ -355,200 +375,331 @@ class TelegramUI:
         return InlineKeyboardMarkup(
             inline_keyboard=[
                 [
-                    InlineKeyboardButton(text="5 мин", callback_data="v1:int:5"),
-                    InlineKeyboardButton(text="15 мин", callback_data="v1:int:15"),
-                    InlineKeyboardButton(text="30 мин", callback_data="v1:int:30"),
-                    InlineKeyboardButton(text="60 мин", callback_data="v1:int:60"),
-                ],
-                [InlineKeyboardButton(text="Свой интервал", callback_data="v1:int:custom")],
-                [InlineKeyboardButton(text="Часовой пояс", callback_data="v1:timezone")],
-                [
-                    InlineKeyboardButton(
-                        text="▶️ Возобновить" if settings.paused else "⏸ Пауза",
-                        callback_data="v1:pause",
-                    )
+                    InlineKeyboardButton(text="5m", callback_data="v2:int:5"),
+                    InlineKeyboardButton(text="15m", callback_data="v2:int:15"),
+                    InlineKeyboardButton(text="30m", callback_data="v2:int:30"),
+                    InlineKeyboardButton(text="60m", callback_data="v2:int:60"),
                 ],
                 [
                     InlineKeyboardButton(
-                        text=f"{mark(n.window_updates)} Обновления окон",
-                        callback_data="v1:notif:window_updates",
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        text=f"{mark(n.usage_restored)} Восстановление",
-                        callback_data="v1:notif:usage_restored",
+                        text=tr(language, "settings.custom_interval"),
+                        callback_data="v2:int:custom",
                     ),
                     InlineKeyboardButton(
-                        text=f"{mark(n.reset_credits)} Reset-кредиты",
-                        callback_data="v1:notif:reset_credits",
+                        text=tr(language, "settings.timezone_button"),
+                        callback_data="v2:timezone",
                     ),
                 ],
                 [
                     InlineKeyboardButton(
-                        text=f"{mark(n.significant_changes)} Другие изменения",
-                        callback_data="v1:notif:significant_changes",
+                        text=tr(language, "settings.language_button"),
+                        callback_data="v2:language",
+                    ),
+                    InlineKeyboardButton(
+                        text=tr(
+                            language,
+                            "settings.resume" if settings.paused else "settings.pause",
+                        ),
+                        callback_data="v2:pause",
+                    ),
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=f"{mark(notifications.window_updates)} "
+                        f"{tr(language, 'settings.window_updates')}",
+                        callback_data="v2:notif:window_updates",
                     )
                 ],
                 [
                     InlineKeyboardButton(
-                        text=f"{mark(n.credit_expiry_reminder)} Срок reset-кредита",
-                        callback_data="v1:notif:credit_expiry_reminder",
+                        text=f"{mark(notifications.usage_restored)} "
+                        f"{tr(language, 'settings.usage_restored')}",
+                        callback_data="v2:notif:usage_restored",
+                    ),
+                    InlineKeyboardButton(
+                        text=f"{mark(notifications.reset_credits)} "
+                        f"{tr(language, 'settings.reset_credits')}",
+                        callback_data="v2:notif:reset_credits",
+                    ),
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=f"{mark(notifications.significant_changes)} "
+                        f"{tr(language, 'settings.significant_changes')}",
+                        callback_data="v2:notif:significant_changes",
                     )
                 ],
-                [InlineKeyboardButton(text="← Назад", callback_data="v1:close")],
+                [
+                    InlineKeyboardButton(
+                        text=f"{mark(notifications.credit_expiry_reminder)} "
+                        f"{tr(language, 'settings.credit_expiry')}",
+                        callback_data="v2:notif:credit_expiry_reminder",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=tr(language, "settings.back"), callback_data="v2:close"
+                    )
+                ],
             ]
         )
 
     async def account_text(self) -> str:
+        settings = await self.repository.settings.get()
         state = await self.repository.state.get()
+        language = settings.language
+        lines = [tr(language, "account.title")]
         if state.account and state.auth_status == "connected":
-            email = state.account.masked_email or "email недоступен"
-            plan = state.account.plan or "план неизвестен"
-            return f"👤 <b>Codex-аккаунт</b>\n{html.escape(email)}\nПлан: {html.escape(plan)}"
-        return "👤 <b>Codex-аккаунт</b>\nАккаунт не подключён."
-
-    async def account_keyboard(self) -> InlineKeyboardMarkup:
-        state = await self.repository.state.get()
-        rows: list[list[InlineKeyboardButton]] = []
-        if state.auth_status == "connected":
-            rows.append(
-                [InlineKeyboardButton(text="Выйти из Codex", callback_data="v1:logout:ask")]
+            lines.append(
+                html.escape(state.account.masked_email or tr(language, "account.email_unavailable"))
+            )
+            lines.append(
+                tr(
+                    language,
+                    "account.plan",
+                    plan=html.escape(state.account.plan or tr(language, "account.plan_unknown")),
+                )
             )
         else:
-            rows.append(
-                [InlineKeyboardButton(text="🔐 Подключить Codex", callback_data="v1:login")]
-            )
-        rows.append([InlineKeyboardButton(text="← Назад", callback_data="v1:close")])
-        return InlineKeyboardMarkup(inline_keyboard=rows)
+            lines.append(tr(language, "account.not_connected"))
+        return "\n".join(lines)
 
-    async def diagnostics_text(self) -> str:
+    async def account_keyboard(self) -> InlineKeyboardMarkup:
+        settings = await self.repository.settings.get()
         state = await self.repository.state.get()
-        codex_state = "работает" if self.rpc.running else "перезапускается"
-        delivery = "работает" if self.delivery.running else "остановлена"
-        update_status = read_update_status(self.config.data_dir / "update-status.json")
-        return (
-            "🧰 <b>Диагностика</b>\n"
-            f"Версия: {html.escape(self.config.version)}\n"
-            f"Commit: <code>{html.escape(self.config.commit)}</code>\n"
-            "Codex: 0.154.0\n"
-            f"App Server: {codex_state}\n"
-            f"Планировщик: {'работает' if self.monitor.next_check_at is not None else 'ожидает'}\n"
-            f"Доставка: {delivery}\n"
-            f"Очередь: {len(state.outbox)}\n"
-            f"Обновление: {html.escape(update_status)}\n"
-            f"Последняя ошибка: {html.escape(state.last_error or self.delivery.last_error or 'нет')}"
+        language = settings.language
+        action = "logout" if state.auth_status == "connected" else "login"
+        key = "account.logout" if action == "logout" else "account.connect"
+        callback = "v2:logout:ask" if action == "logout" else "v2:login"
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=tr(language, key), callback_data=callback)],
+                [
+                    InlineKeyboardButton(
+                        text=tr(language, "settings.back"), callback_data="v2:close"
+                    )
+                ],
+            ]
         )
 
-    @staticmethod
-    def help_text() -> str:
-        return (
-            "❓ <b>Помощь</b>\n"
-            "«Статус» показывает последние достоверные данные. «Проверить сейчас» выполняет чтение "
-            "без запроса к модели. При паузе ручная проверка доступна.\n\n"
-            "Для входа откройте «Аккаунт» → «Подключить Codex». Device-code вход может требовать "
-            "разрешения в настройках безопасности ChatGPT или от администратора workspace. Никогда "
-            "не присылайте боту пароль, cookies, токены или auth.json."
+    async def diagnostics_text(self) -> str:
+        settings = await self.repository.settings.get()
+        state = await self.repository.state.get()
+        language = settings.language
+        error = state.last_error or self.delivery.last_error
+        if error and has_translation(language, f"error.{error}"):
+            error_text = tr(language, f"error.{error}")
+        else:
+            error_text = html.escape(error) if error else tr(language, "diagnostics.no_error")
+        return "\n".join(
+            [
+                tr(language, "diagnostics.title"),
+                tr(language, "diagnostics.version", version=html.escape(self.config.version)),
+                tr(language, "diagnostics.commit", commit=html.escape(self.config.commit)),
+                "Codex: 0.154.0",
+                tr(
+                    language,
+                    "diagnostics.app_server_running"
+                    if self.rpc.running
+                    else "diagnostics.app_server_restarting",
+                ),
+                tr(
+                    language,
+                    "diagnostics.scheduler_running"
+                    if self.monitor.next_check_at is not None
+                    else "diagnostics.scheduler_waiting",
+                ),
+                tr(
+                    language,
+                    "diagnostics.delivery_running"
+                    if self.delivery.running
+                    else "diagnostics.delivery_stopped",
+                ),
+                tr(language, "diagnostics.queue", count=len(state.outbox)),
+                tr(
+                    language,
+                    "diagnostics.update",
+                    status=html.escape(
+                        read_update_status(self.config.data_dir / "update-status.json", language)
+                    ),
+                ),
+                tr(language, "diagnostics.last_error", error=error_text),
+            ]
         )
 
     async def show_history(self, message: Message, page: int) -> None:
         state = await self.repository.state.get()
         settings = await self.repository.settings.get()
-        page_size = 5
+        text, keyboard = self._history_page(settings, state, page)
+        await message.answer(text, reply_markup=keyboard)
+
+    def _history_page(
+        self, settings: Settings, state: AppState, page: int
+    ) -> tuple[str, InlineKeyboardMarkup]:
         events = list(reversed(state.events))
+        page_size = 5
         pages = max(1, (len(events) + page_size - 1) // page_size)
         page = min(max(page, 0), pages - 1)
         selected = events[page * page_size : (page + 1) * page_size]
-        if selected:
-            body = "\n\n".join(
-                f"<b>{html.escape(event.title)}</b>\n{html.escape(event.details)}\n"
-                f"{_format_datetime(event.detected_at, settings.timezone)}"
-                for event in selected
-            )
-        else:
-            body = "Событий пока нет. Первое наблюдение становится baseline."
+        body = "\n\n".join(
+            f"{render_event(event, settings.language, settings.timezone, rationale=True)}\n"
+            f"{format_datetime(event.detected_at, settings.timezone, settings.language)}"
+            for event in selected
+        ) or tr(settings.language, "history.empty")
         buttons: list[InlineKeyboardButton] = []
         if page > 0:
-            buttons.append(InlineKeyboardButton(text="←", callback_data=f"v1:hist:{page - 1}"))
-        buttons.append(InlineKeyboardButton(text=f"{page + 1}/{pages}", callback_data="v1:noop"))
+            buttons.append(InlineKeyboardButton(text="←", callback_data=f"v2:hist:{page - 1}"))
+        buttons.append(InlineKeyboardButton(text=f"{page + 1}/{pages}", callback_data="v2:noop"))
         if page + 1 < pages:
-            buttons.append(InlineKeyboardButton(text="→", callback_data=f"v1:hist:{page + 1}"))
-        await message.answer(
-            f"🕘 <b>История</b>\n\n{body}",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[buttons]),
+            buttons.append(InlineKeyboardButton(text="→", callback_data=f"v2:hist:{page + 1}"))
+        return (
+            f"{tr(settings.language, 'history.title')}\n\n{body}",
+            InlineKeyboardMarkup(inline_keyboard=[buttons]),
         )
 
     async def handle_callback(self, query: CallbackQuery, state: FSMContext) -> None:
         if not await self._authorized_callback(query):
             return
+        settings = await self.repository.settings.get()
+        language = settings.language
         data = query.data or ""
         message = query.message
         if not isinstance(message, Message):
             await query.answer()
             return
-        if not data.startswith("v1:"):
-            await query.answer("Эта кнопка устарела. Откройте меню заново.", show_alert=True)
+        if not data.startswith("v2:"):
+            await query.answer(tr(language, "callback.stale"), show_alert=True)
             return
         parts = data.split(":")
         action = parts[1]
-        if action == "int" and len(parts) == 3:
+        if action == "refresh":
+            await query.answer(tr(language, "check.checking"))
+            result = await self.monitor.check_now(manual=True)
+            self.delivery.wake()
+            settings = await self.repository.settings.get()
+            app_state = await self.repository.state.get()
+            await message.edit_text(
+                self._checked_status(settings, app_state, result.message_key),
+                reply_markup=status_keyboard(settings.language),
+            )
+            return
+        if action == "status":
+            await message.edit_text(
+                render_status(settings, await self.repository.state.get()),
+                reply_markup=status_keyboard(language),
+            )
+        elif action == "details":
+            await message.edit_text(
+                render_details(settings, await self.repository.state.get()),
+                reply_markup=details_keyboard(language),
+            )
+        elif action == "int" and len(parts) == 3:
             if parts[2] == "custom":
                 await state.set_state(InputState.interval)
-                await message.answer("Введите интервал от 5 до 1440 минут или /cancel.")
+                await message.answer(tr(language, "input.interval_prompt"))
+            elif not parts[2].isdecimal() or not 5 <= int(parts[2]) <= 1440:
+                await query.answer(tr(language, "callback.stale"), show_alert=True)
+                return
             else:
-                if not parts[2].isdecimal() or not 5 <= int(parts[2]) <= 1440:
-                    await query.answer("Эта кнопка устарела.", show_alert=True)
-                    return
                 minutes = int(parts[2])
 
-                def update(settings: Settings) -> None:
-                    settings.interval_minutes = minutes
+                def update_interval(current: Settings) -> None:
+                    current.interval_minutes = minutes
 
-                await self.repository.settings.mutate(update)
+                await self.repository.settings.mutate(update_interval)
                 self.monitor.settings_changed()
                 await self._edit_settings(message)
         elif action == "timezone":
             await state.set_state(InputState.timezone)
-            await message.answer("Введите IANA timezone, например Europe/Moscow, или /cancel.")
+            await message.answer(tr(language, "input.timezone_prompt"))
+        elif action == "language":
+            await message.edit_text(
+                tr(language, "language.title"),
+                reply_markup=InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [
+                            InlineKeyboardButton(
+                                text=tr(language, "language.english"),
+                                callback_data="v2:lang:en",
+                            ),
+                            InlineKeyboardButton(
+                                text=tr(language, "language.russian"),
+                                callback_data="v2:lang:ru",
+                            ),
+                        ],
+                        [
+                            InlineKeyboardButton(
+                                text=tr(language, "settings.back"),
+                                callback_data="v2:settings",
+                            )
+                        ],
+                    ]
+                ),
+            )
+        elif action == "lang" and len(parts) == 3 and parts[2] in SUPPORTED_LANGUAGES:
+            selected: Language = "ru" if parts[2] == "ru" else "en"
+
+            def update_language(current: Settings) -> None:
+                current.language = selected
+
+            settings = await self.repository.settings.mutate(update_language)
+            await state.clear()
+            await self.register_commands()
+            await self._edit_settings(message)
+            await message.answer(
+                tr(settings.language, "language.changed"),
+                reply_markup=main_keyboard(settings.language),
+            )
+        elif action == "settings":
+            await message.edit_text(
+                await self.settings_text(), reply_markup=await self.settings_keyboard()
+            )
         elif action == "pause":
 
-            def toggle(settings: Settings) -> None:
-                settings.paused = not settings.paused
+            def toggle_pause(current: Settings) -> None:
+                current.paused = not current.paused
 
-            await self.repository.settings.mutate(toggle)
+            await self.repository.settings.mutate(toggle_pause)
             self.monitor.settings_changed()
             await self._edit_settings(message)
         elif action == "notif" and len(parts) == 3:
             field = parts[2]
-            allowed = set(NotificationSettings.model_fields)
-            if field not in allowed:
-                await query.answer("Эта кнопка устарела.", show_alert=True)
+            if field not in NotificationSettings.model_fields:
+                await query.answer(tr(language, "callback.stale"), show_alert=True)
                 return
 
-            def toggle_notification(settings: Settings) -> None:
-                current = getattr(settings.notifications, field)
-                setattr(settings.notifications, field, not current)
+            def toggle_notification(current: Settings) -> None:
+                enabled = getattr(current.notifications, field)
+                setattr(current.notifications, field, not enabled)
 
             await self.repository.settings.mutate(toggle_notification)
             await self._edit_settings(message)
-        elif action == "hist" and len(parts) == 3:
-            if not parts[2].isdecimal():
-                await query.answer("Эта кнопка устарела.", show_alert=True)
-                return
-            await self._edit_history(message, int(parts[2]))
+        elif action == "hist" and len(parts) == 3 and parts[2].isdecimal():
+            text, keyboard = self._history_page(
+                settings, await self.repository.state.get(), int(parts[2])
+            )
+            await message.edit_text(text, reply_markup=keyboard)
         elif action == "login":
             await self._start_login(message)
         elif action == "login_cancel" and len(parts) == 3:
             cancelled = await self.login.cancel_by_tag(parts[2])
-            await message.edit_text("Вход отменён." if cancelled else "Этот вход уже завершён.")
+            await message.edit_text(
+                tr(language, "login.cancelled" if cancelled else "login.already_finished")
+            )
         elif action == "logout" and len(parts) == 3 and parts[2] == "ask":
             await message.edit_text(
-                "Выйти из Codex? Авторизация будет удалена официальным CLI.",
+                tr(language, "logout.confirm"),
                 reply_markup=InlineKeyboardMarkup(
                     inline_keyboard=[
                         [
-                            InlineKeyboardButton(text="Да, выйти", callback_data="v1:logout:yes"),
-                            InlineKeyboardButton(text="Отмена", callback_data="v1:close"),
+                            InlineKeyboardButton(
+                                text=tr(language, "logout.yes"),
+                                callback_data="v2:logout:yes",
+                            ),
+                            InlineKeyboardButton(
+                                text=tr(language, "login.cancel"),
+                                callback_data="v2:close",
+                            ),
                         ]
                     ]
                 ),
@@ -558,7 +709,7 @@ class TelegramUI:
             try:
                 await self.rpc.request("account/logout")
             except Exception:
-                await query.answer("Не удалось выйти из Codex. Повторите позже.", show_alert=True)
+                await query.answer(tr(language, "logout.failed"), show_alert=True)
                 return
 
             def logout(current: AppState) -> None:
@@ -572,13 +723,13 @@ class TelegramUI:
 
             await self.repository.state.mutate(logout)
             self.monitor.settings_changed()
-            await message.edit_text("Вы вышли из Codex. Старые показания больше не сравниваются.")
+            await message.edit_text(tr(language, "logout.done"))
         elif action == "close":
             await message.edit_reply_markup(reply_markup=None)
         elif action == "noop":
             pass
         else:
-            await query.answer("Эта кнопка устарела. Откройте меню заново.", show_alert=True)
+            await query.answer(tr(language, "callback.stale"), show_alert=True)
             return
         await query.answer()
 
@@ -588,55 +739,36 @@ class TelegramUI:
                 await self.settings_text(), reply_markup=await self.settings_keyboard()
             )
 
-    async def _edit_history(self, message: Message, page: int) -> None:
-        state = await self.repository.state.get()
-        settings = await self.repository.settings.get()
-        events = list(reversed(state.events))
-        page_size = 5
-        pages = max(1, (len(events) + page_size - 1) // page_size)
-        page = min(max(page, 0), pages - 1)
-        selected = events[page * page_size : (page + 1) * page_size]
-        body = (
-            "\n\n".join(
-                f"<b>{html.escape(event.title)}</b>\n{html.escape(event.details)}\n"
-                f"{_format_datetime(event.detected_at, settings.timezone)}"
-                for event in selected
-            )
-            or "Событий пока нет."
-        )
-        buttons: list[InlineKeyboardButton] = []
-        if page > 0:
-            buttons.append(InlineKeyboardButton(text="←", callback_data=f"v1:hist:{page - 1}"))
-        buttons.append(InlineKeyboardButton(text=f"{page + 1}/{pages}", callback_data="v1:noop"))
-        if page + 1 < pages:
-            buttons.append(InlineKeyboardButton(text="→", callback_data=f"v1:hist:{page + 1}"))
-        await message.edit_text(
-            f"🕘 <b>История</b>\n\n{body}",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[buttons]),
-        )
-
     async def _start_login(self, message: Message) -> None:
+        settings = await self.repository.settings.get()
+        language = settings.language
         try:
             device = await self.login.start()
-        except LoginAlreadyRunning as exc:
-            await message.answer(str(exc))
+        except LoginAlreadyRunning:
+            await message.answer(tr(language, "login.already_running"))
             return
         except Exception:
-            await message.answer("Не удалось начать официальный вход. Повторите позже.")
+            await message.answer(tr(language, "login.start_failed"))
             return
         login_message = await message.answer(
-            "🔐 <b>Вход в Codex</b>\n"
-            f"1. Откройте официальную страницу: {html.escape(device.verification_url)}\n"
-            f"2. Введите одноразовый код: <code>{html.escape(device.user_code)}</code>\n\n"
-            "Device-code вход может требовать разрешения в настройках безопасности ChatGPT или "
-            "от администратора workspace. Не отправляйте сюда пароль или токены.",
+            f"{tr(language, 'login.title')}\n"
+            + tr(
+                language,
+                "login.instructions",
+                url=html.escape(device.verification_url),
+                code=html.escape(device.user_code),
+            ),
             reply_markup=InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [InlineKeyboardButton(text="Открыть OpenAI", url=device.verification_url)],
                     [
                         InlineKeyboardButton(
-                            text="Отменить вход",
-                            callback_data=f"v1:login_cancel:{login_callback_tag(device.login_id)}",
+                            text=tr(language, "login.open"), url=device.verification_url
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            text=tr(language, "login.cancel"),
+                            callback_data=f"v2:login_cancel:{login_callback_tag(device.login_id)}",
                         )
                     ],
                 ]
@@ -654,20 +786,21 @@ class TelegramUI:
     async def _finish_login(self, device: DeviceLogin, message: Message) -> None:
         completion = await self.login.wait(device.login_id)
         self.delivery.wake()
+        settings = await self.repository.settings.get()
         with contextlib.suppress(TelegramBadRequest):
-            await message.edit_text(completion.message)
+            await message.edit_text(tr(settings.language, completion.message_key))
 
     async def recover_interrupted_login(self) -> None:
         pending = await self.login.recover_interrupted()
-        if pending is None:
+        if pending is None or not pending.message_chat_id or not pending.message_id:
             return
-        if pending.message_chat_id and pending.message_id:
-            with contextlib.suppress(TelegramBadRequest):
-                await self.bot.edit_message_text(
-                    "Поток входа был прерван перезапуском. Код больше не используется; начните вход снова.",
-                    chat_id=pending.message_chat_id,
-                    message_id=pending.message_id,
-                )
+        settings = await self.repository.settings.get()
+        with contextlib.suppress(TelegramBadRequest):
+            await self.bot.edit_message_text(
+                tr(settings.language, "login.restart_interrupted"),
+                chat_id=pending.message_chat_id,
+                message_id=pending.message_id,
+            )
 
     async def close(self) -> None:
         for task in self._tasks:

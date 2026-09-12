@@ -13,3 +13,7 @@
 - Changes to installation, state schema, healthcheck, CI promotion, or rollback require deployment tests.
 - Keep Codex pinned to the stable version documented in `docs/architecture.md` and verify the official
   release checksum during image build.
+- Keep English as the default and source language, with Russian in the centralized translation
+  catalog. Domain events and the outbox must remain language-neutral and structured.
+- Keep installer output, administrator logs, code comments, and primary documentation in English.
+  Unauthorized Telegram traffic must be rejected silently before handlers and external calls.

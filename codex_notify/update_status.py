@@ -4,18 +4,14 @@ import json
 import re
 from pathlib import Path
 
-STATUS_LABELS = {
-    "installed": "установлено",
-    "success": "обновлено успешно",
-    "up_to_date": "обновлений нет",
-    "docs_only": "обновлены только файлы без перезапуска",
-    "failed": "неудача, выполнен откат",
-    "rolled_back": "выполнен ручной откат",
-}
+from .i18n import tr
+from .models import Language
+
+STATUS_VALUES = {"installed", "success", "up_to_date", "docs_only", "failed", "rolled_back"}
 SHA_PATTERN = re.compile(r"^[0-9a-f]{7,40}$")
 
 
-def read_update_status(path: Path) -> str:
+def read_update_status(path: Path, language: Language = "en") -> str:
     try:
         raw = path.read_bytes()
         if len(raw) > 4096:
@@ -26,14 +22,14 @@ def read_update_status(path: Path) -> str:
         status = value.get("status")
         commit = value.get("commit")
         updated_at = value.get("updated_at")
-        if status not in STATUS_LABELS:
+        if status not in STATUS_VALUES:
             raise ValueError("unknown status")
         if not isinstance(commit, str) or not SHA_PATTERN.fullmatch(commit):
-            commit = "неизвестен"
+            commit = tr(language, "update.unknown_commit")
         else:
             commit = commit[:12]
         if not isinstance(updated_at, str) or len(updated_at) > 40:
-            updated_at = "время неизвестно"
-        return f"{STATUS_LABELS[status]} · {commit} · {updated_at}"
+            updated_at = tr(language, "update.unknown_time")
+        return f"{tr(language, f'update.{status}')} · {commit} · {updated_at}"
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
-        return "результат ещё не записан"
+        return tr(language, "update.unavailable")

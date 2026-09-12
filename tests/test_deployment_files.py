@@ -1,8 +1,18 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_application_version_is_consistent() -> None:
+    package = (ROOT / "codex_notify" / "__init__.py").read_text(encoding="utf-8")
+    project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    assert '__version__ = "0.2.0"' in package
+    assert 'version = "0.2.0"' in project
+    assert "ARG APP_VERSION=0.2.0" in dockerfile
 
 
 def test_compose_is_single_unprivileged_service_without_incoming_ports() -> None:
@@ -65,3 +75,16 @@ def test_installer_validates_getme_and_keeps_secrets_out_of_arguments() -> None:
     assert "claim_" not in installer
     assert "docker system prune" not in installer
     assert "firewall" not in installer.lower()
+
+
+def test_installer_scripts_and_primary_docs_are_english() -> None:
+    cyrillic = re.compile(r"[А-Яа-яЁё]")
+    paths = [
+        ROOT / "install.sh",
+        *sorted((ROOT / "scripts").glob("*.sh")),
+        ROOT / "README.md",
+        ROOT / "SECURITY.md",
+        ROOT / "docs" / "architecture.md",
+        ROOT / "docs" / "installation.md",
+    ]
+    assert all(not cyrillic.search(path.read_text(encoding="utf-8")) for path in paths)

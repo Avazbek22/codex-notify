@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import shutil
 import tempfile
@@ -164,6 +165,13 @@ class Repository:
         allow_create = not settings_exists and not state_exists
         loaded_settings = await self.settings.load(allow_create=allow_create)
         loaded_state = await self.state.load(allow_create=allow_create)
+        if not allow_create:
+            settings_schema = json.loads(self.settings.path.read_bytes()).get("schema_version")
+            state_schema = json.loads(self.state.path.read_bytes()).get("schema_version")
+            if settings_schema != loaded_settings.schema_version:
+                loaded_settings = await self.settings.replace(loaded_settings)
+            if state_schema != loaded_state.schema_version:
+                loaded_state = await self.state.replace(loaded_state)
         return loaded_settings, loaded_state
 
     def snapshot_json_files(self, destination: Path) -> None:

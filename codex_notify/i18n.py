@@ -1,0 +1,516 @@
+from __future__ import annotations
+
+from typing import Final
+
+from .models import Language
+
+SUPPORTED_LANGUAGES: Final[tuple[Language, ...]] = ("en", "ru")
+
+_EN: dict[str, str] = {
+    "duration.days": "{value}d",
+    "duration.hours": "{value}h",
+    "duration.minutes": "{value}m",
+    "month.1": "Jan",
+    "month.2": "Feb",
+    "month.3": "Mar",
+    "month.4": "Apr",
+    "month.5": "May",
+    "month.6": "Jun",
+    "month.7": "Jul",
+    "month.8": "Aug",
+    "month.9": "Sep",
+    "month.10": "Oct",
+    "month.11": "Nov",
+    "month.12": "Dec",
+    "menu.status": "📊 Status",
+    "menu.check": "🔄 Check now",
+    "menu.settings": "⚙️ Settings",
+    "menu.history": "🕘 History",
+    "menu.account": "👤 Account",
+    "menu.help": "❓ Help",
+    "legacy.menu.check.v1": "🔄 Check now",
+    "command.status": "Show current limits",
+    "command.check": "Check now",
+    "command.settings": "Monitoring settings",
+    "command.history": "Event history",
+    "command.account": "Codex connection",
+    "command.diagnostics": "Safe diagnostics",
+    "command.help": "Help",
+    "command.cancel": "Cancel input",
+    "start.bound": "✅ This Telegram account is now the owner. Open Account to connect Codex.",
+    "start.welcome": "Hello! I monitor one Codex account. Choose an action:",
+    "input.cancelled": "Input cancelled.",
+    "input.interval_invalid": "Enter a whole number from 5 to 1440, or use /cancel.",
+    "input.interval_prompt": "Enter an interval from 5 to 1440 minutes, or use /cancel.",
+    "input.interval_changed": "Interval changed to {minutes} min.",
+    "input.timezone_invalid": "Unknown IANA timezone. Example: America/New_York. Or use /cancel.",
+    "input.timezone_prompt": "Enter an IANA timezone, for example America/New_York, or use /cancel.",
+    "input.timezone_changed": "Timezone changed to {timezone}.",
+    "input.use_buttons": "Use the menu buttons below.",
+    "check.checking": "Checking…",
+    "check.recent": "A check already ran a few seconds ago.",
+    "check.updated": "Limits updated.",
+    "check.not_connected": "Codex is not connected. Open Account.",
+    "check.unavailable": "OpenAI is temporarily unavailable. Saved data was not changed.",
+    "settings.title": "⚙️ <b>Settings</b>",
+    "settings.interval": "Interval: {minutes} min",
+    "settings.timezone": "Timezone: {timezone}",
+    "settings.language": "Language: English",
+    "settings.monitoring_on": "Monitoring: on",
+    "settings.monitoring_paused": "Monitoring: paused",
+    "settings.notifications_hint": "Use the buttons below to choose notifications.",
+    "settings.custom_interval": "Custom interval",
+    "settings.timezone_button": "Timezone",
+    "settings.language_button": "🌐 Language",
+    "settings.resume": "▶️ Resume",
+    "settings.pause": "⏸ Pause",
+    "settings.window_updates": "Window resets",
+    "settings.usage_restored": "Availability",
+    "settings.reset_credits": "Reset credits",
+    "settings.significant_changes": "Other changes",
+    "settings.credit_expiry": "Credit expiry",
+    "settings.back": "← Back",
+    "language.title": "🌐 <b>Language</b>\nChoose the bot language.",
+    "language.english": "English",
+    "language.russian": "Русский",
+    "language.changed": "Language changed to English.",
+    "account.title": "👤 <b>Codex account</b>",
+    "account.plan": "Plan: {plan}",
+    "account.email_unavailable": "Email unavailable",
+    "account.plan_unknown": "unknown",
+    "account.not_connected": "No account connected.",
+    "account.connect": "🔐 Connect Codex",
+    "account.logout": "Sign out of Codex",
+    "diagnostics.title": "🧰 <b>Diagnostics</b>",
+    "diagnostics.version": "Version: {version}",
+    "diagnostics.commit": "Commit: <code>{commit}</code>",
+    "diagnostics.app_server_running": "App Server: running",
+    "diagnostics.app_server_restarting": "App Server: restarting",
+    "diagnostics.scheduler_running": "Scheduler: running",
+    "diagnostics.scheduler_waiting": "Scheduler: waiting",
+    "diagnostics.delivery_running": "Delivery: running",
+    "diagnostics.delivery_stopped": "Delivery: stopped",
+    "diagnostics.queue": "Queue: {count}",
+    "diagnostics.update": "Update: {status}",
+    "diagnostics.last_error": "Last error: {error}",
+    "diagnostics.no_error": "none",
+    "error.codex_auth_required": "Codex sign-in is required",
+    "error.codex_unavailable": "Codex data is unavailable; saved status is stale",
+    "error.telegram_bot_blocked": "the owner blocked the Telegram bot",
+    "error.telegram_unavailable": "Telegram is temporarily unavailable",
+    "error.telegram_delivery_failed": "Telegram delivery failed",
+    "update.installed": "installed",
+    "update.success": "updated successfully",
+    "update.up_to_date": "up to date",
+    "update.docs_only": "documentation updated without restart",
+    "update.failed": "failed and rolled back",
+    "update.rolled_back": "manually rolled back",
+    "update.unknown_commit": "unknown",
+    "update.unknown_time": "time unknown",
+    "update.unavailable": "no result recorded yet",
+    "help.text": (
+        "❓ <b>Help</b>\nStatus shows the latest trusted data. Check now reads account state "
+        "without invoking a model. Manual checks remain available while monitoring is paused.\n\n"
+        "To sign in, open Account → Connect Codex. Device-code sign-in may need permission in "
+        "ChatGPT security settings or from a workspace administrator. Never send this bot a "
+        "password, cookies, tokens, or auth.json."
+    ),
+    "history.title": "🕘 <b>History</b>",
+    "history.empty": "No events yet. The first observation becomes the baseline.",
+    "history.legacy": "Saved by an earlier version",
+    "callback.stale": "This button is out of date. Open the menu again.",
+    "login.already_running": "A sign-in is already waiting for confirmation. Cancel it first.",
+    "login.start_failed": "Could not start official sign-in. Try again later.",
+    "login.title": "🔐 <b>Sign in to Codex</b>",
+    "login.instructions": (
+        "1. Open the official page: {url}\n"
+        "2. Enter the one-time code: <code>{code}</code>\n\n"
+        "Device-code sign-in may need permission in ChatGPT security settings or from a workspace "
+        "administrator. Do not send a password or tokens here."
+    ),
+    "login.open": "Open OpenAI",
+    "login.cancel": "Cancel sign-in",
+    "login.cancelled": "Sign-in cancelled.",
+    "login.already_finished": "This sign-in has already finished.",
+    "login.rejected": "Sign-in was not completed: the code was rejected or expired.",
+    "login.connected": "Codex connected. The initial baseline was saved without notifications.",
+    "login.connected_no_limits": "Sign-in succeeded, but limits could not be read yet.",
+    "login.expired": "The code expired. Start sign-in again.",
+    "login.interrupted": "Sign-in was interrupted. Start it again.",
+    "login.restart_interrupted": (
+        "Sign-in was interrupted by a restart. The code is no longer used; start again."
+    ),
+    "logout.confirm": "Sign out of Codex? The official CLI will remove its authorization.",
+    "logout.yes": "Yes, sign out",
+    "logout.failed": "Could not sign out of Codex. Try again later.",
+    "logout.done": "Signed out of Codex. Old observations will no longer be compared.",
+    "status.title": "<b>Codex Notify</b>",
+    "status.available": "✅ Codex available{plan}",
+    "status.blocked": "⛔ Codex usage unavailable{plan}",
+    "status.connected": "✅ Codex connected{plan}",
+    "status.connection_stale": "⚠️ Saved Codex status{plan}",
+    "status.reauth": "🔐 Codex needs to be reconnected",
+    "status.disconnected": "Codex is not connected",
+    "status.no_data": "No trusted limit data yet.",
+    "status.no_windows": "Limit windows were not provided.",
+    "status.unlimited": "♾ <b>{label}</b> · unlimited",
+    "status.window_missing": "• <b>{label}</b> · window details unavailable",
+    "status.window": "<b>{label} · {duration}{kind}</b>\n{remaining}% left · resets {reset}",
+    "status.window_unknown_duration": "window",
+    "status.primary": " · primary",
+    "status.secondary": " · secondary",
+    "status.reset_unknown": "unknown",
+    "status.credits": "⚡ {count} reset credit{suffix}",
+    "status.credit_expiry": " · expires {expiry}",
+    "status.stale": "⚠️ <b>Saved data is stale.</b>",
+    "status.updated": "Updated {when} · every {minutes} min",
+    "status.updated_paused": "Updated {when} · monitoring paused",
+    "status.next_attempt": "Next attempt: {when}",
+    "status.never": "never",
+    "status.just_now": "just now",
+    "status.minutes_ago": "{value}m ago",
+    "status.hours_ago": "{value}h ago",
+    "status.refresh": "🔄 Refresh",
+    "status.details": "Details",
+    "details.title": "🔎 <b>Limit details</b>",
+    "details.account": "Account: <code>{email}</code>",
+    "details.plan": "Plan: {plan}",
+    "details.window": (
+        "• <b>{label}</b> ({kind}, {duration}): used {used}%, left {remaining}%\n  Reset: {reset}"
+    ),
+    "details.window_no_duration": (
+        "• <b>{label}</b> ({kind}): used {used}%, left {remaining}%\n  Reset: {reset}"
+    ),
+    "details.backend_limit": "  Backend limit: {value}",
+    "details.usage_allowed": "Ordinary usage: available",
+    "details.usage_blocked": "Ordinary usage: blocked",
+    "details.usage_unknown": "Ordinary usage: unknown",
+    "details.credits": "Reset credits: {count}",
+    "details.credits_unknown": "Reset credits: temporarily unknown",
+    "details.credits_unsupported": "Reset credits: not provided by this server response",
+    "details.credit": "  • {title} · expires {expiry}",
+    "credit.default_title": "Reset credit",
+    "details.last_success": "Last successful check: {when}",
+    "details.next_attempt": "Next attempt: {when}",
+    "details.monitoring": "Monitoring: {state} · {minutes} min",
+    "details.monitoring_on": "on",
+    "details.monitoring_paused": "paused",
+    "event.detected": "Detected: {when}",
+    "event.unavailable": "🔔 A saved notification is no longer available.",
+    "event.why": "Why: {reason}",
+    "event.window_reset_confirmed.title": "Limit window reset",
+    "event.window_reset_confirmed.details": "{label} · {window}: {remaining}% left.",
+    "event.window_reset_confirmed.reason": (
+        "The reset time advanced and usage decreased after the previous window was due to end."
+    ),
+    "event.window_changed_early.title": "Limit state changed earlier than expected",
+    "event.window_changed_early.details": "{label} · {window}: {before}% → {after}% used.",
+    "event.window_changed_early.reason": (
+        "A confirmation read repeated the change, but there is not enough evidence to call it a reset."
+    ),
+    "event.window_duration_changed.title": "Limit parameters changed",
+    "event.window_duration_changed.details": "{label} · {window}: window is now {duration}.",
+    "event.window_duration_changed.reason": (
+        "The backend reported a different window duration, so it was not classified as a reset."
+    ),
+    "event.backend_limit_status_changed.title": "Backend limit status changed",
+    "event.backend_limit_status_changed.details": "{label}: backend restriction state changed.",
+    "event.backend_limit_status_changed.reason": (
+        "An explicit limit-reached or spend-control flag changed."
+    ),
+    "event.usage_restored_backend.title": "Codex usage is available again",
+    "event.usage_restored_backend.details": "The backend confirmed ordinary usage is available.",
+    "event.usage_restored_backend.reason": (
+        "Based on an explicit ordinaryUsageAllowed false → true transition, not window percentages."
+    ),
+    "event.reset_credit_granted.title": "New reset credit available",
+    "event.reset_credit_granted.details": "Available now: {count}.",
+    "event.reset_credit_granted.reason": (
+        "The authoritative count increased or a newly granted stable credit ID appeared."
+    ),
+    "event.credit_expiring_24h.title": "Reset credit expires soon",
+    "event.credit_expiring_24h.details": "{title} expires {expiry}.",
+    "event.credit_expiring_24h.reason": (
+        "The backend supplied expiresAt and less than 24 hours remain."
+    ),
+    "event.monitor_unavailable.title": "Monitoring is temporarily unavailable",
+    "event.monitor_unavailable.details": "Three consecutive checks failed. Duplicate alerts are muted.",
+    "event.monitor_unavailable.reason": (
+        "Transport or RPC failures are not treated as revoked authorization."
+    ),
+    "event.monitor_recovered.title": "Monitoring recovered",
+    "event.monitor_recovered.details": "Trusted Codex data is available again.",
+    "event.monitor_recovered.reason": "A successful read followed a reported extended outage.",
+    "event.auth_required.title": "Reconnect Codex",
+    "event.auth_required.details": "Automatic checks are paused until you sign in again from Account.",
+    "event.auth_required.reason": (
+        "account/read reported no ChatGPT account; network failures do not trigger this event."
+    ),
+    "event.account_changed.title": "A different Codex account was connected",
+    "event.account_changed.details": "The new account became the baseline; old readings were not compared.",
+    "event.account_changed.reason": "The stable account identity changed.",
+}
+
+_RU: dict[str, str] = {
+    "duration.days": "{value} д",
+    "duration.hours": "{value} ч",
+    "duration.minutes": "{value} мин",
+    "month.1": "янв",
+    "month.2": "фев",
+    "month.3": "мар",
+    "month.4": "апр",
+    "month.5": "май",
+    "month.6": "июн",
+    "month.7": "июл",
+    "month.8": "авг",
+    "month.9": "сен",
+    "month.10": "окт",
+    "month.11": "ноя",
+    "month.12": "дек",
+    "menu.status": "📊 Статус",
+    "menu.check": "🔄 Проверить",
+    "menu.settings": "⚙️ Настройки",
+    "menu.history": "🕘 История",
+    "menu.account": "👤 Аккаунт",
+    "menu.help": "❓ Помощь",
+    "legacy.menu.check.v1": "🔄 Проверить сейчас",
+    "command.status": "Показать текущие лимиты",
+    "command.check": "Проверить сейчас",
+    "command.settings": "Настройки мониторинга",
+    "command.history": "История событий",
+    "command.account": "Подключение Codex",
+    "command.diagnostics": "Безопасная диагностика",
+    "command.help": "Помощь",
+    "command.cancel": "Отменить ввод",
+    "start.bound": "✅ Этот Telegram-аккаунт назначен владельцем. Откройте Аккаунт, чтобы подключить Codex.",
+    "start.welcome": "Здравствуйте! Я отслеживаю один Codex-аккаунт. Выберите действие:",
+    "input.cancelled": "Ввод отменён.",
+    "input.interval_invalid": "Введите целое число от 5 до 1440 или используйте /cancel.",
+    "input.interval_prompt": "Введите интервал от 5 до 1440 минут или используйте /cancel.",
+    "input.interval_changed": "Интервал изменён: {minutes} мин.",
+    "input.timezone_invalid": "Неизвестный часовой пояс IANA. Пример: Europe/Moscow. Или используйте /cancel.",
+    "input.timezone_prompt": "Введите часовой пояс IANA, например Europe/Moscow, или используйте /cancel.",
+    "input.timezone_changed": "Часовой пояс изменён: {timezone}.",
+    "input.use_buttons": "Используйте кнопки меню.",
+    "check.checking": "Проверяю…",
+    "check.recent": "Проверка уже выполнялась несколько секунд назад.",
+    "check.updated": "Лимиты обновлены.",
+    "check.not_connected": "Codex не подключён. Откройте Аккаунт.",
+    "check.unavailable": "OpenAI временно недоступен. Сохранённые данные не изменены.",
+    "settings.title": "⚙️ <b>Настройки</b>",
+    "settings.interval": "Интервал: {minutes} мин",
+    "settings.timezone": "Часовой пояс: {timezone}",
+    "settings.language": "Язык: Русский",
+    "settings.monitoring_on": "Мониторинг: включён",
+    "settings.monitoring_paused": "Мониторинг: пауза",
+    "settings.notifications_hint": "Выберите нужные уведомления кнопками ниже.",
+    "settings.custom_interval": "Свой интервал",
+    "settings.timezone_button": "Часовой пояс",
+    "settings.language_button": "🌐 Язык",
+    "settings.resume": "▶️ Возобновить",
+    "settings.pause": "⏸ Пауза",
+    "settings.window_updates": "Сбросы окон",
+    "settings.usage_restored": "Доступность",
+    "settings.reset_credits": "Reset-кредиты",
+    "settings.significant_changes": "Другие изменения",
+    "settings.credit_expiry": "Истечение кредита",
+    "settings.back": "← Назад",
+    "language.title": "🌐 <b>Язык</b>\nВыберите язык бота.",
+    "language.english": "English",
+    "language.russian": "Русский",
+    "language.changed": "Язык изменён на русский.",
+    "account.title": "👤 <b>Codex-аккаунт</b>",
+    "account.plan": "План: {plan}",
+    "account.email_unavailable": "Email недоступен",
+    "account.plan_unknown": "неизвестен",
+    "account.not_connected": "Аккаунт не подключён.",
+    "account.connect": "🔐 Подключить Codex",
+    "account.logout": "Выйти из Codex",
+    "diagnostics.title": "🧰 <b>Диагностика</b>",
+    "diagnostics.version": "Версия: {version}",
+    "diagnostics.commit": "Commit: <code>{commit}</code>",
+    "diagnostics.app_server_running": "App Server: работает",
+    "diagnostics.app_server_restarting": "App Server: перезапускается",
+    "diagnostics.scheduler_running": "Планировщик: работает",
+    "diagnostics.scheduler_waiting": "Планировщик: ожидает",
+    "diagnostics.delivery_running": "Доставка: работает",
+    "diagnostics.delivery_stopped": "Доставка: остановлена",
+    "diagnostics.queue": "Очередь: {count}",
+    "diagnostics.update": "Обновление: {status}",
+    "diagnostics.last_error": "Последняя ошибка: {error}",
+    "diagnostics.no_error": "нет",
+    "error.codex_auth_required": "требуется вход в Codex",
+    "error.codex_unavailable": "данные Codex недоступны; сохранённый статус устарел",
+    "error.telegram_bot_blocked": "владелец заблокировал Telegram-бота",
+    "error.telegram_unavailable": "Telegram временно недоступен",
+    "error.telegram_delivery_failed": "ошибка доставки Telegram",
+    "update.installed": "установлено",
+    "update.success": "обновлено успешно",
+    "update.up_to_date": "обновлений нет",
+    "update.docs_only": "документация обновлена без перезапуска",
+    "update.failed": "ошибка, выполнен откат",
+    "update.rolled_back": "выполнен ручной откат",
+    "update.unknown_commit": "неизвестен",
+    "update.unknown_time": "время неизвестно",
+    "update.unavailable": "результат ещё не записан",
+    "help.text": (
+        "❓ <b>Помощь</b>\nСтатус показывает последние достоверные данные. Проверить сейчас "
+        "читает состояние аккаунта без обращения к модели. Ручная проверка доступна и на паузе.\n\n"
+        "Для входа откройте Аккаунт → Подключить Codex. Device-code вход может требовать разрешения "
+        "в настройках безопасности ChatGPT или администратора workspace. Никогда не отправляйте "
+        "боту пароль, cookies, токены или auth.json."
+    ),
+    "history.title": "🕘 <b>История</b>",
+    "history.empty": "Событий пока нет. Первое наблюдение становится baseline.",
+    "history.legacy": "Сохранено предыдущей версией",
+    "callback.stale": "Эта кнопка устарела. Откройте меню заново.",
+    "login.already_running": "Вход уже ожидает подтверждения. Сначала отмените его.",
+    "login.start_failed": "Не удалось начать официальный вход. Повторите позже.",
+    "login.title": "🔐 <b>Вход в Codex</b>",
+    "login.instructions": (
+        "1. Откройте официальную страницу: {url}\n"
+        "2. Введите одноразовый код: <code>{code}</code>\n\n"
+        "Device-code вход может требовать разрешения в настройках безопасности ChatGPT или "
+        "администратора workspace. Не отправляйте сюда пароль или токены."
+    ),
+    "login.open": "Открыть OpenAI",
+    "login.cancel": "Отменить вход",
+    "login.cancelled": "Вход отменён.",
+    "login.already_finished": "Этот вход уже завершён.",
+    "login.rejected": "Вход не завершён: код отклонён или истёк.",
+    "login.connected": "Codex подключён. Исходное состояние сохранено без уведомлений.",
+    "login.connected_no_limits": "Вход подтверждён, но лимиты пока не удалось прочитать.",
+    "login.expired": "Срок действия кода истёк. Запустите вход ещё раз.",
+    "login.interrupted": "Поток входа прерван. Запустите вход ещё раз.",
+    "login.restart_interrupted": "Вход прерван перезапуском. Код больше не используется; начните снова.",
+    "logout.confirm": "Выйти из Codex? Официальный CLI удалит авторизацию.",
+    "logout.yes": "Да, выйти",
+    "logout.failed": "Не удалось выйти из Codex. Повторите позже.",
+    "logout.done": "Вы вышли из Codex. Старые показания больше не сравниваются.",
+    "status.title": "<b>Codex Notify</b>",
+    "status.available": "✅ Codex доступен{plan}",
+    "status.blocked": "⛔ Использование Codex недоступно{plan}",
+    "status.connected": "✅ Codex подключён{plan}",
+    "status.connection_stale": "⚠️ Сохранённый статус Codex{plan}",
+    "status.reauth": "🔐 Требуется повторно подключить Codex",
+    "status.disconnected": "Codex не подключён",
+    "status.no_data": "Достоверных данных о лимитах пока нет.",
+    "status.no_windows": "Данные об окнах лимитов не предоставлены.",
+    "status.unlimited": "♾ <b>{label}</b> · без ограничений",
+    "status.window_missing": "• <b>{label}</b> · параметры окна недоступны",
+    "status.window": "<b>{label} · {duration}{kind}</b>\nОсталось {remaining}% · сброс {reset}",
+    "status.window_unknown_duration": "окно",
+    "status.primary": " · основное",
+    "status.secondary": " · дополнительное",
+    "status.reset_unknown": "неизвестно",
+    "status.credits": "⚡ Reset-кредиты: {count}",
+    "status.credit_expiry": " · истекает {expiry}",
+    "status.stale": "⚠️ <b>Сохранённые данные устарели.</b>",
+    "status.updated": "Обновлено {when} · каждые {minutes} мин",
+    "status.updated_paused": "Обновлено {when} · мониторинг на паузе",
+    "status.next_attempt": "Следующая попытка: {when}",
+    "status.never": "никогда",
+    "status.just_now": "только что",
+    "status.minutes_ago": "{value} мин назад",
+    "status.hours_ago": "{value} ч назад",
+    "status.refresh": "🔄 Обновить",
+    "status.details": "Подробнее",
+    "details.title": "🔎 <b>Подробности лимитов</b>",
+    "details.account": "Аккаунт: <code>{email}</code>",
+    "details.plan": "План: {plan}",
+    "details.window": (
+        "• <b>{label}</b> ({kind}, {duration}): использовано {used}%, осталось {remaining}%\n"
+        "  Сброс: {reset}"
+    ),
+    "details.window_no_duration": (
+        "• <b>{label}</b> ({kind}): использовано {used}%, осталось {remaining}%\n  Сброс: {reset}"
+    ),
+    "details.backend_limit": "  Ограничение backend: {value}",
+    "details.usage_allowed": "Обычное использование: доступно",
+    "details.usage_blocked": "Обычное использование: заблокировано",
+    "details.usage_unknown": "Обычное использование: неизвестно",
+    "details.credits": "Reset-кредиты: {count}",
+    "details.credits_unknown": "Reset-кредиты: временно неизвестно",
+    "details.credits_unsupported": "Reset-кредиты: не предоставлены ответом сервера",
+    "details.credit": "  • {title} · истекает {expiry}",
+    "credit.default_title": "Reset-кредит",
+    "details.last_success": "Последняя успешная проверка: {when}",
+    "details.next_attempt": "Следующая попытка: {when}",
+    "details.monitoring": "Мониторинг: {state} · {minutes} мин",
+    "details.monitoring_on": "включён",
+    "details.monitoring_paused": "пауза",
+    "event.detected": "Обнаружено: {when}",
+    "event.unavailable": "🔔 Сохранённое уведомление больше недоступно.",
+    "event.why": "Основание: {reason}",
+    "event.window_reset_confirmed.title": "Окно лимита обновилось",
+    "event.window_reset_confirmed.details": "{label} · {window}: осталось {remaining}%.",
+    "event.window_reset_confirmed.reason": (
+        "Время сброса сдвинулось, а использование уменьшилось после ожидаемого окончания окна."
+    ),
+    "event.window_changed_early.title": "Состояние лимита изменилось раньше ожидаемого",
+    "event.window_changed_early.details": "{label} · {window}: использовано {before}% → {after}%.",
+    "event.window_changed_early.reason": (
+        "Контрольное чтение подтвердило изменение, но оснований называть его сбросом недостаточно."
+    ),
+    "event.window_duration_changed.title": "Параметры лимита изменились",
+    "event.window_duration_changed.details": "{label} · {window}: длительность теперь {duration}.",
+    "event.window_duration_changed.reason": (
+        "Backend сообщил другую длительность, поэтому событие не классифицировано как сброс."
+    ),
+    "event.backend_limit_status_changed.title": "Статус ограничения изменился",
+    "event.backend_limit_status_changed.details": "{label}: состояние ограничения backend изменилось.",
+    "event.backend_limit_status_changed.reason": (
+        "Изменился явный флаг достигнутого лимита или контроля расходов."
+    ),
+    "event.usage_restored_backend.title": "Использование Codex снова доступно",
+    "event.usage_restored_backend.details": "Backend подтвердил доступность обычного использования.",
+    "event.usage_restored_backend.reason": (
+        "Основано на явном переходе ordinaryUsageAllowed false → true, а не процентах окна."
+    ),
+    "event.reset_credit_granted.title": "Доступен новый reset-кредит",
+    "event.reset_credit_granted.details": "Сейчас доступно: {count}.",
+    "event.reset_credit_granted.reason": (
+        "Увеличился authoritative count или появился новый устойчивый ID начисления."
+    ),
+    "event.credit_expiring_24h.title": "Reset-кредит скоро истечёт",
+    "event.credit_expiring_24h.details": "{title} истекает {expiry}.",
+    "event.credit_expiring_24h.reason": (
+        "Backend предоставил expiresAt, до истечения осталось менее 24 часов."
+    ),
+    "event.monitor_unavailable.title": "Мониторинг временно недоступен",
+    "event.monitor_unavailable.details": "Три проверки подряд завершились ошибкой. Повторы отключены.",
+    "event.monitor_unavailable.reason": (
+        "Транспортные и RPC-ошибки не считаются отзывом авторизации."
+    ),
+    "event.monitor_recovered.title": "Мониторинг восстановлен",
+    "event.monitor_recovered.details": "Достоверные данные Codex снова доступны.",
+    "event.monitor_recovered.reason": "Успешное чтение выполнено после объявленного длительного сбоя.",
+    "event.auth_required.title": "Подключите Codex повторно",
+    "event.auth_required.details": "Автопроверки приостановлены до нового входа через Аккаунт.",
+    "event.auth_required.reason": (
+        "account/read сообщил отсутствие ChatGPT-аккаунта; сетевые ошибки этого события не создают."
+    ),
+    "event.account_changed.title": "Подключён другой Codex-аккаунт",
+    "event.account_changed.details": "Новый аккаунт стал baseline; старые показания не сравнивались.",
+    "event.account_changed.reason": "Изменилась устойчивая идентичность аккаунта.",
+}
+
+CATALOGS: Final[dict[Language, dict[str, str]]] = {"en": _EN, "ru": _RU}
+
+if _EN.keys() != _RU.keys():
+    missing_en = sorted(_RU.keys() - _EN.keys())
+    missing_ru = sorted(_EN.keys() - _RU.keys())
+    raise RuntimeError(
+        f"translation catalogs differ: missing_en={missing_en}, missing_ru={missing_ru}"
+    )
+
+
+def tr(language: Language, key: str, **values: object) -> str:
+    template = CATALOGS[language].get(key)
+    if template is None:
+        raise KeyError(f"unknown translation key: {key}")
+    return template.format(**values)
+
+
+def has_translation(language: Language, key: str) -> bool:
+    return key in CATALOGS[language]

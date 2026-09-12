@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DEFAULT_REPOSITORY="git@github.com:Avazbek22/codex-notify.git"
+DEFAULT_REPOSITORY="https://github.com/Avazbek22/codex-notify.git"
 DEPLOY_REF="deploy"
 COMPOSE_PROJECT="${COMPOSE_PROJECT:-codex-notify}"
 SERVICE_KEY="codex-notify"
@@ -24,7 +24,7 @@ die() { printf '\033[31m✗\033[0m %s\n' "$*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1; }
 
 as_root() {
-  if [[ "$(id -u)" == "0" ]]; then "$@"; else need sudo || die "Требуется sudo"; sudo "$@"; fi
+  if [[ "$(id -u)" == "0" ]]; then "$@"; else need sudo || die "sudo is required"; sudo "$@"; fi
 }
 
 docker_cmd() {
@@ -41,7 +41,7 @@ compose() {
       as_root docker-compose -p "$COMPOSE_PROJECT" -f "$INSTALL_DIR/docker-compose.yml" "$@"
     fi
   else
-    die "Docker Compose недоступен"
+    die "Docker Compose is unavailable"
   fi
 }
 
@@ -63,42 +63,42 @@ set_env_value() {
 }
 
 install_prerequisites() {
-  info "Проверка окружения"
+  info "Checking the host environment"
   if ! need git || ! need python3 || ! need flock || ! need docker; then
-    need apt-get || die "Установите Git, Python 3, flock и Docker вручную"
+    need apt-get || die "Install Git, Python 3, flock, and Docker manually"
     as_root apt-get update -y
     need git || as_root apt-get install -y git ca-certificates
     need python3 || as_root apt-get install -y python3
     need flock || as_root apt-get install -y util-linux
     need docker || as_root apt-get install -y docker.io
   fi
-  need docker || die "Docker недоступен"
+  need docker || die "Docker is unavailable"
   if ! docker_cmd compose version >/dev/null 2>&1 && ! need docker-compose; then
     as_root apt-get install -y docker-compose-plugin 2>/dev/null \
       || as_root apt-get install -y docker-compose
   fi
-  docker_cmd info >/dev/null || die "Docker daemon недоступен"
-  ok "Окружение готово; существующие Docker-настройки не изменялись"
+  docker_cmd info >/dev/null || die "The Docker daemon is unavailable"
+  ok "Host is ready; existing Docker settings were not changed"
 }
 
 prepare_repository() {
-  info "Подготовка репозитория"
+  info "Preparing the repository"
   if [[ -d "$INSTALL_DIR/.git" ]]; then
     if [[ -n "$(git -C "$INSTALL_DIR" status --porcelain --untracked-files=no)" ]]; then
-      die "В репозитории есть локальные изменения: $INSTALL_DIR"
+      die "The repository has tracked local changes: $INSTALL_DIR"
     fi
     git -C "$INSTALL_DIR" fetch -q origin "$DEPLOY_REF"
     local approved_sha current_sha
     approved_sha="$(git -C "$INSTALL_DIR" rev-parse "origin/$DEPLOY_REF")"
     current_sha="$(git -C "$INSTALL_DIR" rev-parse HEAD)"
     [[ "$current_sha" == "$approved_sha" ]] ||
-      die "Установка разрешена только из CI-проверенного origin/$DEPLOY_REF"
+      die "Installation is allowed only from CI-approved origin/$DEPLOY_REF"
   else
     as_root mkdir -p "$(dirname "$INSTALL_DIR")"
     as_root git clone --branch "$DEPLOY_REF" --single-branch "$REPOSITORY" "$INSTALL_DIR"
   fi
-  [[ -f "$INSTALL_DIR/docker-compose.yml" ]] || die "Некорректный каталог проекта"
-  ok "Репозиторий готов: $INSTALL_DIR"
+  [[ -f "$INSTALL_DIR/docker-compose.yml" ]] || die "Invalid project directory"
+  ok "Repository is ready: $INSTALL_DIR"
 }
 
 validate_bot_token() {
@@ -121,13 +121,13 @@ try:
         raise ValueError
     print(username)
 except (OSError, ValueError, KeyError, json.JSONDecodeError, urllib.error.URLError):
-    print("Токен отклонён Telegram getMe", file=sys.stderr)
+    print("Telegram getMe rejected the token", file=sys.stderr)
     raise SystemExit(1)
 PY
 }
 
 prepare_environment() {
-  info "Защищённая конфигурация"
+  info "Preparing protected configuration"
   local env_file="$INSTALL_DIR/.env" token bot_username
   if [[ ! -f "$env_file" ]]; then
     cp "$INSTALL_DIR/.env.example" "$env_file"
@@ -136,17 +136,17 @@ prepare_environment() {
   token="$(env_value TELEGRAM_BOT_TOKEN "$env_file")"
   token="${token:-${TELEGRAM_BOT_TOKEN:-}}"
   if [[ -z "$token" ]]; then
-    [[ -t 0 ]] || die "TELEGRAM_BOT_TOKEN нужен для неинтерактивной установки"
-    printf 'Токен Telegram-бота от BotFather: ' >&2
+    [[ -t 0 ]] || die "TELEGRAM_BOT_TOKEN is required for non-interactive installation"
+    printf 'Telegram bot token from BotFather: ' >&2
     read -r -s token
     printf '\n' >&2
   fi
-  [[ "$token" =~ ^[0-9]+:[A-Za-z0-9_-]{20,}$ ]] || die "Неверный формат токена"
-  bot_username="$(validate_bot_token "$token")" || die "Telegram getMe не подтвердил токен"
+  [[ "$token" =~ ^[0-9]+:[A-Za-z0-9_-]{20,}$ ]] || die "Invalid token format"
+  bot_username="$(validate_bot_token "$token")" || die "Telegram getMe did not validate the token"
   set_env_value TELEGRAM_BOT_TOKEN "$token" "$env_file"
   chmod 600 "$env_file"
   BOT_USERNAME="$bot_username"
-  ok "Telegram подтвердил @$BOT_USERNAME; токен не выведен"
+  ok "Telegram confirmed @$BOT_USERNAME; the token was not printed"
 }
 
 prepare_directories() {
@@ -159,36 +159,36 @@ prepare_directories() {
 }
 
 build_image() {
-  info "Сборка проверяемого образа"
+  info "Building the verified image"
   local commit
   commit="$(git -C "$INSTALL_DIR" rev-parse --short=12 HEAD 2>/dev/null || printf unknown)"
   APP_COMMIT="$commit" compose build
   docker_cmd run --rm --entrypoint python codex-notify:local -m codex_notify.smoke
-  ok "Образ и Codex 0.154.0 прошли smoke test"
+  ok "The image and Codex 0.154.0 passed the smoke test"
 }
 
 configure_owner() {
   [[ "$FIRST_CONFIGURATION" == "1" ]] || return 0
   local owner_id="${OWNER_ID:-}"
   if [[ -z "$owner_id" && -t 0 ]]; then
-    printf 'Ваш числовой Telegram ID (Enter — безопасная одноразовая ссылка): ' >&2
+    printf 'Your numeric Telegram ID (Enter for a secure one-time link): ' >&2
     read -r owner_id
   fi
   if [[ -n "$owner_id" ]]; then
-    [[ "$owner_id" =~ ^[1-9][0-9]{3,19}$ ]] || die "OWNER_ID должен быть положительным числом"
+    [[ "$owner_id" =~ ^[1-9][0-9]{3,19}$ ]] || die "OWNER_ID must be a positive number"
     compose run --rm --no-deps "$SERVICE_KEY" \
       python -m codex_notify.admin set-owner "$owner_id" >/dev/null
-    ok "Владелец Telegram настроен по numeric ID"
+    ok "Telegram owner configured by numeric ID"
   else
-    [[ -t 1 ]] || die "Без интерактивного терминала укажите OWNER_ID"
+    [[ -t 1 ]] || die "Set OWNER_ID when no interactive terminal is available"
     BINDING_LINK="$(compose run --rm --no-deps "$SERVICE_KEY" \
       python -m codex_notify.admin binding-link --bot-username "$BOT_USERNAME")"
-    [[ "$BINDING_LINK" == https://t.me/* ]] || die "Не удалось создать ссылку привязки"
+    [[ "$BINDING_LINK" == https://t.me/* ]] || die "Could not create the binding link"
   fi
 }
 
 start_bot() {
-  info "Запуск Codex Notify"
+  info "Starting Codex Notify"
   compose up -d --no-build
   local attempt container status
   for attempt in {1..36}; do
@@ -198,26 +198,26 @@ start_bot() {
     [[ "$status" == "healthy" ]] && break
     sleep 5
   done
-  [[ "$status" == "healthy" ]] || die "Healthcheck не прошёл; смотрите docker compose logs"
+  [[ "$status" == "healthy" ]] || die "Health check failed; inspect docker compose logs"
   local commit status_file="$INSTALL_DIR/data/update-status.json"
   commit="$(git -C "$INSTALL_DIR" rev-parse HEAD)"
   printf '{"status":"installed","commit":"%s","updated_at":"%s"}\n' \
     "$commit" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >"$status_file.tmp"
   chmod 644 "$status_file.tmp"
   mv "$status_file.tmp" "$status_file"
-  ok "Бот запущен и healthcheck успешен"
+  ok "The bot is running and healthy"
 }
 
 install_updater() {
   local answer="${INSTALL_AUTO_UPDATE:-}"
   if [[ -z "$answer" && -t 0 ]]; then
-    printf 'Включить безопасные автообновления из CI-approved deploy? [Y/n]: ' >&2
+    printf 'Enable safe automatic updates from the CI-approved deploy branch? [Y/n]: ' >&2
     read -r answer
   fi
   case "${answer,,}" in n|no|0|false) return 0;; esac
-  need systemctl || { printf 'systemd не найден; автообновления пропущены.\n' >&2; return 0; }
+  need systemctl || { printf 'systemd was not found; automatic updates were skipped.\n' >&2; return 0; }
   [[ -d /run/systemd/system ]] || return 0
-  info "Установка отдельного systemd-таймера обновлений"
+  info "Installing the separate systemd update timer"
   local service=/etc/systemd/system/codex-notify-update.service
   local timer=/etc/systemd/system/codex-notify-update.timer
   sed -e "s|__INSTALL_DIR__|$INSTALL_DIR|g" \
@@ -227,7 +227,7 @@ install_updater() {
   as_root chmod 644 "$service" "$timer"
   as_root systemctl daemon-reload
   as_root systemctl enable --now codex-notify-update.timer
-  ok "Автообновления включены"
+  ok "Automatic updates are enabled"
 }
 
 main() {
@@ -239,14 +239,14 @@ main() {
   configure_owner
   start_bot
   install_updater
-  printf '\nБот: https://t.me/%s\n' "$BOT_USERNAME"
+  printf '\nBot: https://t.me/%s\n' "$BOT_USERNAME"
   if [[ -n "${BINDING_LINK:-}" ]]; then
-    printf '\nОдноразовая ссылка (15 минут, покажите только владельцу):\n%s\n' "$BINDING_LINK"
+    printf '\nOne-time owner link (15 minutes; show it only to the owner):\n%s\n' "$BINDING_LINK"
   fi
-  printf '\nСледующий шаг: откройте бота, затем «Аккаунт» → «Подключить Codex».\n'
-  printf 'Логи: cd %q && docker compose -p %q logs -f --tail=200\n' "$INSTALL_DIR" "$COMPOSE_PROJECT"
-  printf 'Обновить: sudo systemctl start codex-notify-update.service\n'
-  printf 'Диагностика: команда /diagnostics в личном чате владельца\n'
+  printf '\nNext: open the bot, then choose Account → Connect Codex.\n'
+  printf 'Logs: cd %q && docker compose -p %q logs -f --tail=200\n' "$INSTALL_DIR" "$COMPOSE_PROJECT"
+  printf 'Update: sudo systemctl start codex-notify-update.service\n'
+  printf 'Diagnostics: use /diagnostics in the owner private chat\n'
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

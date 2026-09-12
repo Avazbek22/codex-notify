@@ -38,7 +38,8 @@ def test_normal_window_reset_needs_both_usage_drop_and_advanced_timestamp() -> N
     new = snap(used=5, reset=3_800)
     result = analyze_changes(old, new, None, now=now)
     assert event_types(result) == {"window_reset"}
-    assert "прежнее окно" in result.events[0].rationale
+    assert result.events[0].code == "window_reset_confirmed"
+    assert result.events[0].payload.used_percent == 5
 
 
 def test_timestamp_change_alone_is_not_called_a_reset() -> None:
@@ -58,7 +59,7 @@ def test_early_drop_requires_one_confirmation_and_remains_ambiguous() -> None:
     assert first.events == []
     confirmed = analyze_changes(old, new, None, now=now, confirmed=True)
     assert event_types(confirmed) == {"significant_change"}
-    assert "подарком" in confirmed.events[0].rationale
+    assert confirmed.events[0].code == "window_changed_early"
 
 
 def test_new_reset_credit_uses_authoritative_count() -> None:

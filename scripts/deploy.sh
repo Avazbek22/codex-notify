@@ -112,7 +112,7 @@ requires_container_update() {
   local path
   while IFS= read -r path; do
     case "$path" in
-      *.md | LICENSE | .github/* | docs/* | tests/* | requirements-dev.* | pyproject.toml)
+      *.md | LICENSE | .github/* | docs/* | tests/* | requirements-dev.*)
         ;;
       *)
         return 0

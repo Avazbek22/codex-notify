@@ -196,7 +196,7 @@ async def test_account_change_discards_old_outbox_and_rebaselines(tmp_path: Path
             OutboxItem(
                 id="old-account-message",
                 event_ids=[],
-                text="old",
+                legacy_text="old",
                 created_at=utc_now_iso(),
                 detected_at=utc_now_iso(),
             )

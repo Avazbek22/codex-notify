@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import html
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -12,6 +11,8 @@ from .models import (
     AccountIdentity,
     CreditBaseline,
     Event,
+    EventCode,
+    EventPayload,
     EventType,
     NotificationSettings,
     RateBucket,
@@ -30,18 +31,16 @@ def _event_id(kind: str, evidence: Mapping[str, object]) -> str:
 
 def make_event(
     kind: EventType,
-    title: str,
-    details: str,
-    rationale: str,
+    code: EventCode,
     evidence: Mapping[str, object],
+    payload: EventPayload | None = None,
 ) -> Event:
     return Event(
         id=_event_id(kind, evidence),
         type=kind,
         detected_at=utc_now_iso(),
-        title=title,
-        details=details,
-        rationale=rationale,
+        code=code,
+        payload=payload or EventPayload(),
     )
 
 
@@ -251,7 +250,13 @@ def analyze_changes(
         usage_dropped = current.used_percent < previous.used_percent
         reset_evidence = reset_advanced and usage_dropped and not duration_changed
         label = current.limit_name or current.limit_id
-        window_label = "основное" if current.window == "primary" else "дополнительное"
+        payload = EventPayload(
+            limit_label=label,
+            window=current.window,
+            previous_used_percent=previous.used_percent,
+            used_percent=current.used_percent,
+            duration_minutes=current.window_duration_mins,
+        )
 
         if reset_evidence:
             expected = previous.resets_at is not None and now_timestamp >= previous.resets_at - 120
@@ -267,22 +272,18 @@ def analyze_changes(
                 events.append(
                     make_event(
                         "window_reset",
-                        "Окно лимита обновилось",
-                        f"{label}, {window_label}: использовано {current.used_percent}%.",
-                        "Время следующего сброса сдвинулось вперёд, использование уменьшилось, "
-                        "а прежнее окно уже должно было завершиться.",
+                        "window_reset_confirmed",
                         evidence,
+                        payload,
                     )
                 )
             elif confirmed:
                 events.append(
                     make_event(
                         "significant_change",
-                        "Состояние лимита изменилось раньше ожидаемого",
-                        f"{label}, {window_label}: {previous.used_percent}% → {current.used_percent}%.",
-                        "Изменение повторилось при контрольном чтении, но данных недостаточно, "
-                        "чтобы называть его сбросом или подарком.",
+                        "window_changed_early",
                         evidence,
+                        payload,
                     )
                 )
             else:
@@ -291,16 +292,14 @@ def analyze_changes(
             events.append(
                 make_event(
                     "significant_change",
-                    "Параметры лимита изменились",
-                    f"{label}, {window_label}: длительность окна теперь "
-                    f"{current.window_duration_mins or 'не указана'} мин.",
-                    "Backend сообщил другую длительность окна; сравнение как обычного сброса отключено.",
+                    "window_duration_changed",
                     {
                         "account": new.account_key,
                         "window": key,
                         "duration": current.window_duration_mins,
                         "reset": current.resets_at,
                     },
+                    payload,
                 )
             )
 
@@ -314,15 +313,14 @@ def analyze_changes(
             events.append(
                 make_event(
                     "significant_change",
-                    "Статус ограничения изменился",
-                    f"Лимит {current_bucket.limit_name or limit_id}: состояние backend обновлено.",
-                    "Изменился явный флаг достигнутого лимита или контроля расходов.",
+                    "backend_limit_status_changed",
                     {
                         "account": new.account_key,
                         "limit": limit_id,
                         "reached": current_bucket.reached_type,
                         "spend": current_bucket.spend_control_reached,
                     },
+                    EventPayload(limit_label=current_bucket.limit_name or limit_id),
                 )
             )
 
@@ -335,9 +333,7 @@ def analyze_changes(
         events.append(
             make_event(
                 "usage_restored",
-                "Использование снова доступно",
-                "Codex backend подтвердил доступность обычного использования.",
-                "Событие основано на явном ordinaryUsageAllowed=false→true, а не на процентах окна.",
+                "usage_restored_backend",
                 {"account": new.account_key, "observed": new.observed_at},
             )
         )
@@ -361,11 +357,9 @@ def analyze_changes(
             events.append(
                 make_event(
                     "reset_credit_granted",
-                    "Доступен новый reset-кредит",
-                    f"Сейчас доступно: {new.reset_credits_available}.",
-                    "Увеличился authoritative availableCount или появилась запись с новым ID "
-                    "и временем выдачи позже последнего достоверного наблюдения.",
+                    "reset_credit_granted",
                     credit_evidence,
+                    EventPayload(available_count=new.reset_credits_available),
                 )
             )
 
@@ -383,14 +377,16 @@ def credit_expiry_events(snapshot: RateSnapshot, *, now: datetime) -> list[Event
             result.append(
                 make_event(
                     "credit_expiring",
-                    "Reset-кредит скоро истечёт",
-                    "До окончания действия осталось менее 24 часов.",
-                    "Backend предоставил expiresAt; напоминание создаётся один раз для этого срока.",
+                    "credit_expiring_24h",
                     {
                         "account": snapshot.account_key,
                         "credit": credit.id,
                         "expires": credit.expires_at,
                     },
+                    EventPayload(
+                        credit_title=credit.title,
+                        expires_at=credit.expires_at,
+                    ),
                 )
             )
     return result
@@ -409,12 +405,3 @@ def notification_enabled(event: Event, settings: NotificationSettings) -> bool:
         "account_changed": True,
     }
     return mapping[event.type]
-
-
-def render_event_bundle(events: list[Event]) -> str:
-    detected = events[0].detected_at if events else utc_now_iso()
-    blocks = [
-        f"🔔 <b>{html.escape(event.title)}</b>\n{html.escape(event.details)}" for event in events
-    ]
-    blocks.append(f"Обнаружено: <code>{detected}</code> UTC")
-    return "\n\n".join(blocks)

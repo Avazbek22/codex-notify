@@ -6,8 +6,10 @@ from typing import Any
 
 from aiogram.exceptions import TelegramForbiddenError, TelegramNetworkError, TelegramRetryAfter
 
+from .i18n import tr
 from .models import AppState
 from .monitor import outbox_ready, retry_delay
+from .presentation import render_event_bundle
 from .storage import Repository
 from .timeutil import utc_now
 
@@ -41,23 +43,34 @@ class OutboxDelivery:
                         pass
                     continue
                 try:
+                    if item.legacy_text is not None:
+                        text = item.legacy_text
+                    elif item.events:
+                        text = render_event_bundle(
+                            item.events,
+                            settings.language,
+                            settings.timezone,
+                            item.detected_at,
+                        )
+                    else:
+                        text = tr(settings.language, "event.unavailable")
                     await self.bot.send_message(
                         settings.owner_id,
-                        item.text,
+                        text,
                         parse_mode="HTML",
                         disable_web_page_preview=True,
                     )
                 except TelegramRetryAfter as exc:
                     await self._postpone(item.id, float(exc.retry_after), "Telegram flood control")
                 except TelegramForbiddenError:
-                    await self._postpone(item.id, 3600.0, "Владелец заблокировал Telegram-бота")
+                    await self._postpone(item.id, 3600.0, "telegram_bot_blocked")
                 except TelegramNetworkError:
                     await self._postpone(
-                        item.id, retry_delay(item.attempts), "Telegram временно недоступен"
+                        item.id, retry_delay(item.attempts), "telegram_unavailable"
                     )
                 except Exception:
                     await self._postpone(
-                        item.id, retry_delay(item.attempts), "Ошибка доставки Telegram"
+                        item.id, retry_delay(item.attempts), "telegram_delivery_failed"
                     )
                 else:
                     self.last_error = None

@@ -31,7 +31,7 @@ class DeviceLogin:
 @dataclass(frozen=True, slots=True)
 class LoginCompletion:
     success: bool
-    message: str
+    message_key: str
 
 
 def validate_verification_url(value: str) -> str:
@@ -70,7 +70,7 @@ class LoginManager:
         async with self._lock:
             state = await self.repository.state.get()
             if state.pending_login is not None:
-                raise LoginAlreadyRunning("Вход уже ожидает подтверждения. Сначала отмените его.")
+                raise LoginAlreadyRunning
             response = await self.rpc.request("account/login/start", {"type": "chatgptDeviceCode"})
             if response.get("type") != "chatgptDeviceCode":
                 raise LoginProtocolError("Codex returned an unexpected login flow")
@@ -116,22 +116,20 @@ class LoginManager:
             params = notification.get("params", {})
             if not params.get("success"):
                 await self._clear(login_id)
-                return LoginCompletion(False, "Вход не завершён: код отклонён или истёк.")
+                return LoginCompletion(False, "login.rejected")
             await self._clear(login_id)
             result = await self.monitor.check_now(manual=True)
             if result.success:
-                return LoginCompletion(
-                    True, "Codex подключён. Исходное состояние сохранено без уведомлений."
-                )
-            return LoginCompletion(True, "Вход подтверждён, но лимиты пока не удалось прочитать.")
+                return LoginCompletion(True, "login.connected")
+            return LoginCompletion(True, "login.connected_no_limits")
         except TimeoutError:
             await self.cancel(login_id)
-            return LoginCompletion(False, "Срок действия кода истёк. Запустите вход ещё раз.")
+            return LoginCompletion(False, "login.expired")
         except asyncio.CancelledError:
             raise
         except Exception:
             await self._clear(login_id)
-            return LoginCompletion(False, "Поток входа прерван. Запустите вход ещё раз.")
+            return LoginCompletion(False, "login.interrupted")
 
     async def cancel(self, login_id: str | None = None) -> bool:
         async with self._lock:

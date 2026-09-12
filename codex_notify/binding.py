@@ -32,6 +32,11 @@ async def create_binding(store: AtomicModelFile[Settings], *, ttl_minutes: int =
 
 
 async def consume_binding(store: AtomicModelFile[Settings], token: str, telegram_id: int) -> bool:
+    current = await store.get()
+    if current.owner_id is not None or current.binding is None:
+        return False
+    if not hmac.compare_digest(current.binding.token_hash, _hash_token(token)):
+        return False
     accepted = False
 
     def consume(settings: Settings) -> None:

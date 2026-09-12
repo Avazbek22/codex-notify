@@ -9,6 +9,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from . import __version__
+
 LOGGER = logging.getLogger(__name__)
 
 PUBLIC_METHODS = frozenset(
@@ -124,7 +126,7 @@ class CodexAppServer:
                         "clientInfo": {
                             "name": "codex_notify",
                             "title": "Codex Notify",
-                            "version": "0.1.0",
+                            "version": __version__,
                         },
                         "capabilities": {
                             "optOutNotificationMethods": [

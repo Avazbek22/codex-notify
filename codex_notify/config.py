@@ -4,6 +4,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import __version__
+
 
 @dataclass(frozen=True, slots=True)
 class AppConfig:
@@ -31,6 +33,6 @@ class AppConfig:
             rpc_timeout_seconds=float(os.environ.get("CODEX_RPC_TIMEOUT_SECONDS", "20")),
             login_timeout_seconds=float(os.environ.get("CODEX_LOGIN_TIMEOUT_SECONDS", "900")),
             health_file=Path(os.environ.get("HEALTH_FILE", "/tmp/codex-notify-health.json")),
-            version=os.environ.get("APP_VERSION", "0.1.0"),
+            version=os.environ.get("APP_VERSION", __version__),
             commit=os.environ.get("APP_COMMIT", "unknown")[:12],
         )

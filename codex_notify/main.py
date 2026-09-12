@@ -78,9 +78,8 @@ async def async_main() -> None:
         await repository.initialize()
     except StorageRecoveryError:
         logging.getLogger(__name__).critical(
-            "Хранилище повреждено и не восстановлено из резервной копии. "
-            "Бот переведён в закрытое диагностическое состояние; выполните "
-            "scripts/restore-json.sh на сервере."
+            "Storage is corrupt and could not be recovered from a verified backup. "
+            "The bot is in closed diagnostic mode; run scripts/restore-json.sh on the server."
         )
         health = HealthReporter(
             config.health_file,

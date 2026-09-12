@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 HISTORY_LIMIT = 200
+
+Language = Literal["en", "ru"]
 
 
 class StrictModel(BaseModel):
@@ -29,13 +31,26 @@ class BindingState(StrictModel):
 
 
 class Settings(StrictModel):
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     owner_id: int | None = None
     interval_minutes: int = Field(default=30, ge=5, le=1440)
-    timezone: str = "Europe/Moscow"
+    timezone: str = "UTC"
+    language: Language = "en"
     paused: bool = False
     notifications: NotificationSettings = Field(default_factory=NotificationSettings)
     binding: BindingState | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_v1(cls, value: Any) -> Any:
+        if not isinstance(value, dict) or value.get("schema_version") != 1:
+            return value
+        migrated = dict(value)
+        migrated["schema_version"] = 2
+        # v1 was Russian-only. Preserve that experience for existing installations;
+        # new Settings instances use English and UTC.
+        migrated["language"] = "ru"
+        return migrated
 
     @field_validator("owner_id")
     @classmethod
@@ -122,20 +137,53 @@ EventType = Literal[
     "account_changed",
 ]
 
+EventCode = Literal[
+    "window_reset_confirmed",
+    "window_changed_early",
+    "window_duration_changed",
+    "backend_limit_status_changed",
+    "usage_restored_backend",
+    "reset_credit_granted",
+    "credit_expiring_24h",
+    "monitor_unavailable",
+    "monitor_recovered",
+    "auth_required",
+    "account_changed",
+    "legacy_v1",
+]
 
-class Event(StrictModel):
-    id: str
-    type: EventType
-    detected_at: str
+
+class EventPayload(StrictModel):
+    limit_label: str | None = None
+    window: Literal["primary", "secondary"] | None = None
+    previous_used_percent: int | None = Field(default=None, ge=0, le=100)
+    used_percent: int | None = Field(default=None, ge=0, le=100)
+    duration_minutes: int | None = Field(default=None, ge=0)
+    available_count: int | None = Field(default=None, ge=0)
+    credit_title: str | None = None
+    expires_at: int | None = None
+
+
+class LegacyEventText(StrictModel):
     title: str
     details: str
     rationale: str
 
 
+class Event(StrictModel):
+    id: str
+    type: EventType
+    detected_at: str
+    code: EventCode
+    payload: EventPayload = Field(default_factory=EventPayload)
+    legacy_text: LegacyEventText | None = None
+
+
 class OutboxItem(StrictModel):
     id: str
     event_ids: list[str]
-    text: str
+    events: list[Event] = Field(default_factory=list)
+    legacy_text: str | None = None
     created_at: str
     detected_at: str
     attempts: int = 0
@@ -150,7 +198,7 @@ class PendingLogin(StrictModel):
 
 
 class AppState(StrictModel):
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     account: AccountIdentity | None = None
     auth_status: Literal["unknown", "disconnected", "connected", "reauth_required"] = "unknown"
     snapshot: RateSnapshot | None = None
@@ -167,6 +215,60 @@ class AppState(StrictModel):
     auth_required_notified: bool = False
     pending_login: PendingLogin | None = None
     post_reset_checks: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_v1(cls, value: Any) -> Any:
+        if not isinstance(value, dict) or value.get("schema_version") != 1:
+            return value
+        migrated = dict(value)
+        migrated["schema_version"] = 2
+        if value.get("last_error") is not None:
+            migrated["last_error"] = (
+                "codex_auth_required"
+                if value.get("auth_status") in {"disconnected", "reauth_required"}
+                else "codex_unavailable"
+            )
+        migrated_events: list[dict[str, Any]] = []
+        raw_events = value.get("events", [])
+        if not isinstance(raw_events, list):
+            raise ValueError("v1 events must be a list")
+        for raw_event in raw_events:
+            if not isinstance(raw_event, dict):
+                raise ValueError("v1 event must be an object")
+            required_event = {"id", "type", "detected_at", "title", "details", "rationale"}
+            if not required_event <= raw_event.keys():
+                raise ValueError("v1 event is incomplete")
+            migrated_events.append(
+                {
+                    "id": raw_event["id"],
+                    "type": raw_event["type"],
+                    "detected_at": raw_event["detected_at"],
+                    "code": "legacy_v1",
+                    "payload": {},
+                    "legacy_text": {
+                        "title": raw_event["title"],
+                        "details": raw_event["details"],
+                        "rationale": raw_event["rationale"],
+                    },
+                }
+            )
+        migrated["events"] = migrated_events
+        migrated_outbox: list[dict[str, Any]] = []
+        raw_outbox = value.get("outbox", [])
+        if not isinstance(raw_outbox, list):
+            raise ValueError("v1 outbox must be a list")
+        for raw_item in raw_outbox:
+            if not isinstance(raw_item, dict):
+                raise ValueError("v1 outbox item must be an object")
+            item = dict(raw_item)
+            if not isinstance(item.get("text"), str):
+                raise ValueError("v1 outbox item has no text")
+            item["events"] = []
+            item["legacy_text"] = item.pop("text")
+            migrated_outbox.append(item)
+        migrated["outbox"] = migrated_outbox
+        return migrated
 
     def bounded(self) -> AppState:
         self.events = self.events[-HISTORY_LIMIT:]

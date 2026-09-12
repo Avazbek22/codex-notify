@@ -99,6 +99,12 @@ if grep -q ' build \| up ' "$docs/commands.log"; then
   exit 1
 fi
 
+metadata="$TEST_ROOT/metadata"
+prepare_case "$metadata"
+printf 'pyproject.toml\n' >"$metadata/changes"
+run_deploy "$metadata"
+grep -q 'docker compose .* build --pull codex-notify' "$metadata/commands.log"
+
 failed="$TEST_ROOT/failed"
 prepare_case "$failed"
 if run_deploy "$failed" FAKE_FAIL_BUILD=1; then

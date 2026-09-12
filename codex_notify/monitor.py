@@ -16,7 +16,6 @@ from .domain import (
     make_event,
     normalize_snapshot,
     notification_enabled,
-    render_event_bundle,
 )
 from .models import AppState, Event, OutboxItem, Settings
 from .storage import Repository
@@ -32,7 +31,7 @@ class RpcClient(Protocol):
 @dataclass(frozen=True, slots=True)
 class CheckResult:
     success: bool
-    message: str
+    message_key: str
     new_events: int = 0
     retry_after_seconds: float | None = None
 
@@ -61,7 +60,7 @@ class Monitor:
             if self._current and not self._current.done():
                 task = self._current
             elif manual and time.monotonic() - self._last_manual_started < self.manual_cooldown:
-                return CheckResult(True, "Проверка уже выполнялась несколько секунд назад.")
+                return CheckResult(True, "check.recent")
             else:
                 if manual:
                     self._last_manual_started = time.monotonic()
@@ -113,9 +112,7 @@ class Monitor:
                     0,
                     make_event(
                         "account_changed",
-                        "Подключён другой Codex-аккаунт",
-                        "Новый аккаунт принят как baseline; старые показания не сравниваются.",
-                        "Идентификатор аккаунта изменился.",
+                        "account_changed",
                         {"account": identity.key},
                     ),
                 )
@@ -137,9 +134,7 @@ class Monitor:
                 if current.outage_notified:
                     recovered = make_event(
                         "monitor_recovered",
-                        "Мониторинг восстановлен",
-                        "Достоверные данные Codex снова получены.",
-                        "Успешное чтение после ранее объявленного длительного сбоя.",
+                        "monitor_recovered",
                         {"outage": current.outage_started_at or "unknown"},
                     )
                     if recovered.id not in known_ids:
@@ -154,7 +149,7 @@ class Monitor:
             count = len(
                 [event for event in detected_events if event.id in {e.id for e in saved.events}]
             )
-            return CheckResult(True, "Лимиты обновлены.", count)
+            return CheckResult(True, "check.updated", count)
         except asyncio.CancelledError:
             raise
         except CodexRpcError as exc:
@@ -169,13 +164,11 @@ class Monitor:
 
         def commit(state: AppState) -> None:
             state.auth_status = "reauth_required" if state.account else "disconnected"
-            state.last_error = "Требуется вход в Codex"
+            state.last_error = "codex_auth_required"
             if state.account and not state.auth_required_notified:
                 event = make_event(
                     "auth_required",
-                    "Требуется повторный вход в Codex",
-                    "Автоматические проверки приостановлены. Откройте «Аккаунт» и войдите снова.",
-                    "account/read вернул отсутствие ChatGPT-аккаунта; сетевые ошибки сюда не относятся.",
+                    "auth_required",
                     {"account": state.account.key, "state": "signed_out"},
                 )
                 self._append_events_and_outbox(state, [event], settings)
@@ -183,22 +176,20 @@ class Monitor:
             state.bounded()
 
         await self.repository.state.mutate(commit)
-        return CheckResult(False, "Codex не подключён. Откройте «Аккаунт».")
+        return CheckResult(False, "check.not_connected")
 
     async def _record_failure(self, *, retry_after: float | None = None) -> CheckResult:
         settings = await self.repository.settings.get()
 
         def commit(state: AppState) -> None:
             state.consecutive_failures += 1
-            state.last_error = "Не удалось получить данные Codex; сохранённый статус устарел"
+            state.last_error = "codex_unavailable"
             if state.outage_started_at is None:
                 state.outage_started_at = utc_now_iso()
             if state.consecutive_failures >= 3 and not state.outage_notified:
                 event = make_event(
                     "monitor_unavailable",
-                    "Мониторинг временно недоступен",
-                    "Три проверки подряд завершились ошибкой. Повторные одинаковые уведомления отключены.",
-                    "Серия транспортных или RPC-ошибок; она не считается отзывом авторизации.",
+                    "monitor_unavailable",
                     {"outage": state.outage_started_at},
                 )
                 self._append_events_and_outbox(state, [event], settings)
@@ -208,7 +199,7 @@ class Monitor:
         await self.repository.state.mutate(commit)
         return CheckResult(
             False,
-            "OpenAI сейчас недоступен. Сохранённые данные не изменены.",
+            "check.unavailable",
             retry_after_seconds=retry_after,
         )
 
@@ -231,7 +222,7 @@ class Monitor:
             OutboxItem(
                 id=digest,
                 event_ids=event_ids,
-                text=render_event_bundle(notify),
+                events=[event.model_copy(deep=True) for event in notify],
                 created_at=utc_now_iso(),
                 detected_at=notify[0].detected_at,
             )

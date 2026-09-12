@@ -3,7 +3,8 @@
 ## Первый запуск
 
 1. Создайте Telegram-бота у BotFather и сохраните token.
-2. Дайте VPS read-only deploy key к приватному репозиторию, как показано в README.
+2. Клонируйте публичную CI-approved ветку `deploy`, как показано в README. Для приватного форка
+   используйте отдельный read-only deploy key.
 3. Запустите `sudo ./install.sh`. Существующий Docker не переустанавливается и чужие ресурсы не
    очищаются.
 4. Укажите свой numeric Telegram ID либо откройте показанную только в терминале одноразовую ссылку.
@@ -14,9 +15,14 @@
 Если device-code выключен, включите его в ChatGPT Security или попросите администратора workspace.
 Не отправляйте в Telegram пароль, cookies, access/refresh token или `auth.json`.
 
+Новые установки запускаются на английском с часовым поясом UTC. Язык и timezone меняются в
+**Настройки → Язык** и **Настройки → Часовой пояс**. При обновлении с v0.1 сохраняются русский язык и
+существующий timezone.
+
 ## Данные
 
-- `data/settings.json`: numeric owner, интервал, пауза, timezone, уведомления и незавершённая привязка;
+- `data/settings.json`: numeric owner, язык, интервал, пауза, timezone, уведомления и незавершённая
+  привязка;
 - `data/state.json`: последнее наблюдение, account fingerprint, максимум 200 событий и outbox;
 - `data/update-status.json`: безопасный результат последней проверки обновлений для `/diagnostics`;
 - `codex-home/auth.json`: официальная авторизация Codex; обновляется самим CLI;

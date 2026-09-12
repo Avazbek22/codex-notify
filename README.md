@@ -12,7 +12,7 @@ threads or turns, invokes a model, executes Codex tasks, or consumes reset credi
 - Notifications for confirmed window resets, restored availability, newly available reset credits,
   significant ambiguous changes, and optional reset-credit expiration reminders.
 - Preset polling intervals of 5, 15, 30, and 60 minutes, plus custom values from 5 to 1,440 minutes.
-- Immediate manual checks, monitoring pause and resume controls, and a Russian Telegram interface.
+- Immediate manual checks, monitoring pause and resume controls, and English/Russian UI.
 - Bounded event history and a persistent JSON outbox.
 - Interactive installation and CI-approved automatic updates with health checks and rollback.
 
@@ -25,38 +25,23 @@ socket inside the container.
 - Docker with Docker Compose.
 - Git, Python 3, and systemd for automatic updates.
 - A Telegram bot token created through BotFather.
-- Read access to this repository.
+- Network access to GitHub, Telegram, and OpenAI authentication services.
 
 The installer does not change the firewall, SSH configuration, routing, IPv6 settings, global Docker
 configuration, or resources belonging to other applications.
 
 ## Quick installation on Debian or Ubuntu
 
-This repository is private by default. Create a dedicated SSH key on the server and add **only its
-public key** under GitHub repository **Settings → Deploy keys**. Leave `Allow write access` disabled.
-
-```bash
-ssh-keygen -t ed25519 -f ~/.ssh/codex-notify-deploy -N ''
-cat ~/.ssh/codex-notify-deploy.pub
-```
-
-Add an isolated host alias to `~/.ssh/config`:
-
-```sshconfig
-Host github-codex-notify
-  HostName github.com
-  User git
-  IdentityFile ~/.ssh/codex-notify-deploy
-  IdentitiesOnly yes
-```
-
 Clone the CI-approved deployment branch and run the installer:
 
 ```bash
-git clone --branch deploy git@github-codex-notify:Avazbek22/codex-notify.git
+git clone --branch deploy https://github.com/Avazbek22/codex-notify.git
 cd codex-notify
 sudo ./install.sh
 ```
+
+For a private fork, use a dedicated read-only deploy key instead of putting a GitHub token in the
+clone URL, image, or Telegram configuration.
 
 The installer will:
 
@@ -76,7 +61,7 @@ successful installation.
 After binding the Telegram owner:
 
 1. Open the bot in a private chat.
-2. Select **Account → Connect Codex** in the Russian interface.
+2. Select **Account → Connect Codex**.
 3. Open the official `https://auth.openai.com/codex/device` page shown by the bot.
 4. Enter the one-time code and confirm the sign-in in your browser.
 
@@ -92,16 +77,18 @@ shown as the current balance and are not announced as newly granted credits.
 
 The main menu provides:
 
-- **Status** — connection state, available rate-limit windows, used and remaining percentages, reset
-  times, reset-credit information, last successful check, next attempt, and monitoring state.
+- **Status** — a compact view of remaining percentages, reset times, credits, freshness, and
+  monitoring state; **Details** shows the complete technical view.
 - **Check now** — starts an immediate check or joins one already in progress.
-- **Settings** — polling interval, IANA timezone, pause/resume, and notification categories.
+- **Settings** — language, polling interval, IANA timezone, pause/resume, and notification categories.
 - **History** — paginated recent events.
 - **Account** — connect, reconnect, or confirm logout from Codex.
 - **Help** — concise operating and security guidance.
 
-Equivalent slash commands are registered through the Telegram Bot API. Every command, state-input
-handler, and callback requires both the configured numeric owner ID and a private chat.
+English is the default for new installations, with UTC as the initial timezone. Existing v0.1
+installations migrate safely with Russian preserved until the owner changes it in **Settings →
+Language**. Slash commands are registered only for the owner's private chat. Unauthorized users and
+group messages are ignored before handlers or external calls run.
 
 ## Persistent data
 
@@ -144,9 +131,9 @@ sudo ./scripts/change-token.sh
 sudo ./scripts/rollback.sh
 ```
 
-See the [Russian installation and operations guide](docs/ru-installation.md) for JSON recovery,
-manual rollback details, token replacement, reconnection, and removal without deleting persistent
-data.
+See the [installation and operations guide](docs/installation.md), or its
+[Russian translation](docs/ru-installation.md), for JSON recovery, manual rollback, token
+replacement, reconnection, and removal without deleting persistent data.
 
 ## Automatic-update model
 
@@ -167,7 +154,8 @@ The host updater:
 - remembers a failed SHA until a newer approved commit appears.
 
 The Python bot has neither root access nor the Docker socket. Updating is handled by the separate host
-systemd service.
+systemd service. The default timer checks one hour after the previous run with up to 15 minutes of
+randomized delay. Run the service manually when an approved update should be applied immediately.
 
 ## Development
 

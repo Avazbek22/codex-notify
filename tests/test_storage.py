@@ -6,9 +6,10 @@ from pathlib import Path
 import pytest
 
 from codex_notify.instance_lock import AlreadyRunningError, InstanceLock
-from codex_notify.models import AppState, CreditBaseline, Event, OutboxItem
+from codex_notify.models import AppState, CreditBaseline, Event, OutboxItem, Settings
 from codex_notify.storage import Repository, StorageRecoveryError
 from codex_notify.timeutil import utc_now_iso
+from codex_notify.validate_data import validate_data
 
 
 @pytest.mark.asyncio
@@ -24,16 +25,14 @@ async def test_persists_baseline_and_outbox_across_restart(tmp_path: Path) -> No
             id="event-1",
             type="monitor_unavailable",
             detected_at=utc_now_iso(),
-            title="x",
-            details="y",
-            rationale="z",
+            code="monitor_unavailable",
         )
         state.events.append(event)
         state.outbox.append(
             OutboxItem(
                 id="outbox-1",
                 event_ids=[event.id],
-                text="message",
+                events=[event],
                 created_at=utc_now_iso(),
                 detected_at=event.detected_at,
             )
@@ -78,6 +77,98 @@ async def test_missing_one_canonical_file_never_reopens_registration(tmp_path: P
     (tmp_path / "state.json").unlink()
     with pytest.raises(StorageRecoveryError, match="refusing unsafe reset"):
         await Repository(tmp_path).initialize()
+
+
+@pytest.mark.asyncio
+async def test_v1_migration_preserves_owner_language_history_and_outbox(tmp_path: Path) -> None:
+    detected_at = "2026-09-12T10:00:00Z"
+    settings_v1 = {
+        "schema_version": 1,
+        "owner_id": 123456,
+        "interval_minutes": 30,
+        "timezone": "Europe/Moscow",
+        "paused": False,
+        "notifications": {
+            "window_updates": True,
+            "usage_restored": True,
+            "reset_credits": True,
+            "significant_changes": True,
+            "credit_expiry_reminder": False,
+            "service_health": True,
+        },
+        "binding": None,
+    }
+    state_v1 = {
+        "schema_version": 1,
+        "account": None,
+        "auth_status": "disconnected",
+        "snapshot": None,
+        "credit_baseline": None,
+        "events": [
+            {
+                "id": "legacy-event",
+                "type": "monitor_unavailable",
+                "detected_at": detected_at,
+                "title": "Старое событие",
+                "details": "Сохранённые детали",
+                "rationale": "Сохранённое основание",
+            }
+        ],
+        "dedupe_event_ids": ["legacy-event"],
+        "outbox": [
+            {
+                "id": "legacy-outbox",
+                "event_ids": ["legacy-event"],
+                "text": "Старое уведомление",
+                "created_at": detected_at,
+                "detected_at": detected_at,
+                "attempts": 0,
+                "not_before": None,
+            }
+        ],
+        "last_success_at": None,
+        "next_check_at": None,
+        "last_error": None,
+        "consecutive_failures": 0,
+        "outage_started_at": None,
+        "outage_notified": False,
+        "auth_required_notified": False,
+        "pending_login": None,
+        "post_reset_checks": [],
+    }
+    (tmp_path / "settings.json").write_text(json.dumps(settings_v1), encoding="utf-8")
+    (tmp_path / "state.json").write_text(json.dumps(state_v1), encoding="utf-8")
+
+    settings, state = await Repository(tmp_path).initialize()
+
+    assert settings.schema_version == 2
+    assert settings.owner_id == 123456
+    assert settings.language == "ru"
+    assert settings.timezone == "Europe/Moscow"
+    assert state.schema_version == 2
+    assert state.events[0].code == "legacy_v1"
+    assert state.events[0].legacy_text is not None
+    assert state.events[0].legacy_text.title == "Старое событие"
+    assert state.outbox[0].legacy_text == "Старое уведомление"
+    assert json.loads((tmp_path / "settings.json").read_text())["schema_version"] == 2
+    assert json.loads((tmp_path / "state.json").read_text())["schema_version"] == 2
+
+
+def test_preflight_validation_accepts_v1_without_mutating_rollback_copy(tmp_path: Path) -> None:
+    settings = Settings().model_dump()
+    settings["schema_version"] = 1
+    settings.pop("language")
+    state = AppState().model_dump()
+    state["schema_version"] = 1
+    settings_raw = json.dumps(settings)
+    state_raw = json.dumps(state)
+    (tmp_path / "settings.json").write_text(settings_raw, encoding="utf-8")
+    (tmp_path / "state.json").write_text(state_raw, encoding="utf-8")
+
+    validate_data(tmp_path)
+
+    assert (tmp_path / "settings.json").read_text(encoding="utf-8") == settings_raw
+    assert (tmp_path / "state.json").read_text(encoding="utf-8") == state_raw
 
 
 @pytest.mark.asyncio
@@ -136,9 +227,7 @@ def test_history_is_bounded_but_unsent_outbox_is_never_discarded() -> None:
                 id=f"event-{index}",
                 type="significant_change",
                 detected_at=now,
-                title="x",
-                details="y",
-                rationale="z",
+                code="backend_limit_status_changed",
             )
             for index in range(250)
         ],
@@ -147,7 +236,7 @@ def test_history_is_bounded_but_unsent_outbox_is_never_discarded() -> None:
             OutboxItem(
                 id=f"outbox-{index}",
                 event_ids=[],
-                text="message",
+                legacy_text="message",
                 created_at=now,
                 detected_at=now,
             )
