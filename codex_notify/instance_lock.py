@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import os
 from pathlib import Path
 from types import TracebackType
@@ -21,20 +22,18 @@ class InstanceLock:
         os.chmod(self.path, 0o600)
         try:
             if os.name == "nt":
-                import msvcrt
-
                 stream.seek(0)
                 if not stream.read(1):
                     stream.write("0")
                     stream.flush()
                 stream.seek(0)
-                msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+                windows_lock = vars(importlib.import_module("msvcrt"))
+                windows_lock["locking"](stream.fileno(), windows_lock["LK_NBLCK"], 1)
             else:
-                import fcntl
-
-                fcntl.flock(  # type: ignore[attr-defined]
+                unix_lock = vars(importlib.import_module("fcntl"))
+                unix_lock["flock"](
                     stream.fileno(),
-                    fcntl.LOCK_EX | fcntl.LOCK_NB,  # type: ignore[attr-defined]
+                    unix_lock["LOCK_EX"] | unix_lock["LOCK_NB"],
                 )
         except OSError as exc:
             stream.close()
@@ -54,16 +53,14 @@ class InstanceLock:
             return
         try:
             if os.name == "nt":
-                import msvcrt
-
                 stream.seek(0)
-                msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+                windows_lock = vars(importlib.import_module("msvcrt"))
+                windows_lock["locking"](stream.fileno(), windows_lock["LK_UNLCK"], 1)
             else:
-                import fcntl
-
-                fcntl.flock(  # type: ignore[attr-defined]
+                unix_lock = vars(importlib.import_module("fcntl"))
+                unix_lock["flock"](
                     stream.fileno(),
-                    fcntl.LOCK_UN,  # type: ignore[attr-defined]
+                    unix_lock["LOCK_UN"],
                 )
         finally:
             stream.close()

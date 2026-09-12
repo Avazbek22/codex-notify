@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from codex_notify.instance_lock import AlreadyRunningError, InstanceLock
 from codex_notify.models import AppState, CreditBaseline, Event, OutboxItem
 from codex_notify.storage import Repository, StorageRecoveryError
 from codex_notify.timeutil import utc_now_iso
@@ -157,3 +158,16 @@ def test_history_is_bounded_but_unsent_outbox_is_never_discarded() -> None:
     assert len(state.events) == 200
     assert len(state.dedupe_event_ids) == 1000
     assert len(state.outbox) == 250
+
+
+def test_instance_lock_refuses_two_process_owners_of_one_data_directory(tmp_path: Path) -> None:
+    first = InstanceLock(tmp_path / "instance.lock")
+    second = InstanceLock(tmp_path / "instance.lock")
+    first.acquire()
+    try:
+        with pytest.raises(AlreadyRunningError):
+            second.acquire()
+    finally:
+        first.release()
+    second.acquire()
+    second.release()
