@@ -3,9 +3,9 @@
 ## Первый запуск
 
 1. Создайте Telegram-бота у BotFather и сохраните token.
-2. Клонируйте публичную CI-approved ветку `deploy`, как показано в README. Для приватного форка
-   используйте отдельный read-only deploy key.
-3. Запустите `sudo ./install.sh`. Существующий Docker не переустанавливается и чужие ресурсы не
+2. Клонируйте репозиторий, как показано в README. Для приватного форка используйте отдельный
+   read-only deploy key.
+3. Запустите `sudo bash install.sh`. Существующий Docker не переустанавливается и чужие ресурсы не
    очищаются.
 4. Укажите свой numeric Telegram ID либо откройте показанную только в терминале одноразовую ссылку.
 5. В личном чате выберите **Аккаунт → Подключить Codex**, откройте официальный HTTPS URL и введите
@@ -34,22 +34,26 @@
 ## Обычные операции
 
 ```bash
+# Что запущено, куда можно откатиться и чего ждёт автодеплой
+sudo bash scripts/status.sh
+
 # Логи
-docker compose -p codex-notify logs -f --tail=200
+docker compose logs -f --tail=200
 
-# Проверить контейнер
-docker compose -p codex-notify ps
+# Выкатить новейший коммит с зелёным CI сейчас
+sudo bash scripts/deploy.sh
 
-# Ручная проверка CI-approved обновления
-sudo systemctl start codex-notify-update.service
-sudo journalctl -u codex-notify-update.service -n 100 --no-pager
-
-# Повторить ранее неудачный SHA осознанно
-sudo FORCE_DEPLOY=1 ./scripts/deploy.sh
+# Повторить ранее неудачный коммит осознанно
+sudo bash scripts/deploy.sh --retry
 
 # Безопасно сменить Telegram token
-sudo ./scripts/change-token.sh
+sudo bash scripts/change-token.sh
 ```
+
+`codex-notify-deploy.timer` раз в две минуты проверяет `main` и выкатывает коммит, как только прошли его
+проверки в GitHub; ручная команда выше лишь не ждёт следующего запуска таймера. Результат каждого
+обновления записывается в `data/update-status.json` и виден в `/diagnostics`. Настройки, например окно
+наблюдения, лежат в `deploy.conf`.
 
 Повторный вход: **Аккаунт → Выйти**, подтвердите, затем **Подключить Codex**. Logout очищает сравнение
 старого аккаунта и его неотправленную очередь, но не назначает нового Telegram-владельца.
@@ -68,20 +72,24 @@ sudo ./scripts/restore-json.sh /absolute/path/to/codex-notify/data/backups/TIMES
 
 ## Ручной rollback
 
-После успешного обновления предыдущий image и pre-update JSON остаются локально:
+После успешного обновления предыдущий релиз (его коммит и тот самый image) и pre-update JSON остаются
+локально:
 
 ```bash
-sudo ./scripts/rollback.sh
+sudo bash scripts/rollback.sh
 ```
 
 Rollback сохраняет актуальный `CODEX_HOME`; JSON откатывается только если его schema уже несовместима
-со старым image. В таком случае лог прямо предупреждает, что изменения outbox во время неудачного
-старта могли быть потеряны. Неудачный remote SHA запоминается до появления нового.
+со старым image. В таком случае лог прямо предупреждает, что изменения после backup могли быть
+потеряны. Повторный запуск возвращает заменённый релиз. После rollback таймер не трогает бота до
+следующего push; `sudo bash scripts/deploy.sh --retry` снова выкатывает новейший коммит.
+
+Релиз, который стал unhealthy в первые десять минут после запуска, откатывается так же автоматически.
 
 ## Удаление без потери данных
 
 ```bash
-sudo systemctl disable --now codex-notify-update.timer
+sudo systemctl disable --now codex-notify-deploy.timer codex-notify-rebuild.timer
 docker compose -p codex-notify stop
 docker compose -p codex-notify rm -f
 ```

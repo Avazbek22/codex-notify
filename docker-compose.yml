@@ -1,8 +1,9 @@
-name: ${COMPOSE_PROJECT_NAME:-codex-notify}
+name: ${APP_SLUG:-codex-notify}
 
 services:
   codex-notify:
-    image: codex-notify:local
+    # Deployment builds candidates as :candidate; :local is the running release.
+    image: ${APP_SLUG:-codex-notify}:${APP_IMAGE_TAG:-local}
     build:
       context: .
       args:

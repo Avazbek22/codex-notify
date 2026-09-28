@@ -32,12 +32,12 @@ configuration, or resources belonging to other applications.
 
 ## Quick installation on Debian or Ubuntu
 
-Clone the CI-approved deployment branch and run the installer:
+Clone the repository and run the installer:
 
 ```bash
-git clone --branch deploy https://github.com/Avazbek22/codex-notify.git
+git clone https://github.com/Avazbek22/codex-notify.git
 cd codex-notify
-sudo ./install.sh
+sudo bash install.sh
 ```
 
 For a private fork, use a dedicated read-only deploy key instead of putting a GitHub token in the
@@ -51,7 +51,7 @@ The installer will:
 4. Create protected persistent directories for bot data and the isolated `CODEX_HOME`.
 5. Build and smoke-test the pinned container image.
 6. Start the bot and wait for its health check.
-7. Offer to enable the separate systemd automatic-update timer; the default is yes.
+7. Offer to enable automatic updates from `main`; the default is yes.
 
 The installer prints the real Telegram bot link, log command, update command, and next step after a
 successful installation.
@@ -111,24 +111,23 @@ owner registration.
 ## Operations
 
 ```bash
+# Running release, previous release, and what automatic deployment waits for
+sudo bash scripts/status.sh
+
 # Follow logs
-docker compose -p codex-notify logs -f --tail=200
+docker compose logs -f --tail=200
 
-# Inspect container and health status
-docker compose -p codex-notify ps
+# Deploy now instead of waiting for the timer (optional)
+sudo bash scripts/deploy.sh
 
-# Run a CI-approved update check manually
-sudo systemctl start codex-notify-update.service
-sudo journalctl -u codex-notify-update.service -n 100 --no-pager
-
-# Retry a previously failed deployment SHA deliberately
-sudo FORCE_DEPLOY=1 ./scripts/deploy.sh
+# Retry a previously failed commit deliberately
+sudo bash scripts/deploy.sh --retry
 
 # Replace the Telegram bot token safely
-sudo ./scripts/change-token.sh
+sudo bash scripts/change-token.sh
 
-# Roll back to the previous image when available
-sudo ./scripts/rollback.sh
+# Return to the previous release (run it again to undo)
+sudo bash scripts/rollback.sh
 ```
 
 See the [installation and operations guide](docs/installation.md), or its
@@ -137,25 +136,28 @@ replacement, reconnection, and removal without deleting persistent data.
 
 ## Automatic-update model
 
-Only the `deploy` branch is installed. CI advances it to an exact `main` commit only after the Python
-3.12 and 3.13 checks, linting, formatting, strict type checking, deployment tests, and Docker build
-have succeeded. A race check prevents an older workflow from promoting over a newer commit.
+The host follows `main`. `codex-notify-deploy.timer` checks it every two minutes and deploys a new
+commit only after its GitHub checks — Python 3.12 and 3.13 tests, linting, formatting, strict type
+checking, deployment tests, and the Docker build — have passed. If CI never starts within 30 minutes,
+the commit is deployed without it.
 
 The host updater:
 
 - uses a lock to prevent concurrent deployments;
 - refuses to overwrite tracked local changes;
-- skips container recreation for documentation-only changes;
 - builds while the existing container is still running;
-- runs a non-polling smoke test and validates a consistent JSON backup;
+- runs a non-polling smoke test and a real Telegram `getMe`;
+- stops the bot, takes a consistent JSON backup, and lets the new image validate it before starting;
 - preserves the current Codex authorization directory;
-- waits for the real application health check;
-- rolls back the image and compatible JSON when startup fails; and
-- remembers a failed SHA until a newer approved commit appears.
+- waits for the real application health check, which requires Telegram to answer `getUpdates`;
+- keeps watching a fresh release for ten minutes and rolls back automatically if it turns unhealthy;
+- restores the exact previous image, and the pre-update JSON only when the older release cannot read
+  the migrated schema;
+- remembers a failed commit until a newer one appears; and
+- reports every result in `data/update-status.json` for `/diagnostics`.
 
-The Python bot has neither root access nor the Docker socket. Updating is handled by the separate host
-systemd service. The default timer checks one hour after the previous run with up to 15 minutes of
-randomized delay. Run the service manually when an approved update should be applied immediately.
+Deployment settings live in [`deploy.conf`](deploy.conf). The Python bot has neither root access nor
+the Docker socket; updating is handled by the host systemd timers.
 
 ## Development
 

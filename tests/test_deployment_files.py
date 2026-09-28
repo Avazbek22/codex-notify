@@ -17,7 +17,8 @@ def test_application_version_is_consistent() -> None:
 
 def test_compose_is_single_unprivileged_service_without_incoming_ports() -> None:
     compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
-    assert compose.startswith("name: ${COMPOSE_PROJECT_NAME:-codex-notify}\n")
+    assert compose.startswith("name: ${APP_SLUG:-codex-notify}\n")
+    assert "image: ${APP_SLUG:-codex-notify}:${APP_IMAGE_TAG:-local}" in compose
     assert compose.count("  codex-notify:") == 1
     assert "ports:" not in compose
     assert "network_mode: host" not in compose
@@ -38,39 +39,39 @@ def test_dockerfile_pins_codex_and_verifies_official_checksum() -> None:
     assert "cargo build" not in dockerfile.lower()
 
 
-def test_ci_promotes_only_successful_newest_main_without_force() -> None:
+def test_ci_is_read_only_and_gates_deployment() -> None:
     workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-    assert "needs: [python, container]" in workflow
-    assert "contents: write" in workflow
-    assert 'test "$CANDIDATE" = "$(git rev-parse refs/remotes/origin/main)"' in workflow
-    assert "merge-base --is-ancestor" in workflow
+    deploy_conf = (ROOT / "deploy.conf").read_text(encoding="utf-8")
+    assert "contents: write" not in workflow
     assert "--force" not in workflow
     assert "pull_request_target" not in workflow
     assert "uses: actions/checkout@v" not in workflow
     assert "uses: actions/setup-python@v" not in workflow
     assert "uses: docker/setup-buildx-action@v" not in workflow
     assert "uses: docker/build-push-action@v" not in workflow
+    assert "DEPLOY_BRANCH=main" in deploy_conf
+    assert "REQUIRE_CI=auto" in deploy_conf
 
 
 def test_updater_preserves_auth_and_has_schema_aware_rollback() -> None:
-    deploy = (ROOT / "scripts/deploy.sh").read_text(encoding="utf-8")
-    assert 'DEPLOY_REF="${DEPLOY_REF:-deploy}"' in deploy
-    assert "previously failed" in deploy
-    assert "documentation/test-only update" in deploy
-    assert "make_consistent_backup" in deploy
-    assert "current_schema" in deploy and "old_max" in deploy
+    names = ("deploy.sh", "lib-production.sh", "hooks.sh", "rollback.sh")
+    deploy = "\n".join((ROOT / "scripts" / name).read_text(encoding="utf-8") for name in names)
+    hooks = (ROOT / "scripts/hooks.sh").read_text(encoding="utf-8")
+    assert "failed-commit" in deploy
+    assert "wait_until_stable" in deploy
+    assert "hook_before_start" in hooks and "validate-data" in hooks
+    assert "hook_before_restore" in hooks and "max-schema" in hooks
+    assert "write_update_status" in hooks
     assert "codex-home" not in deploy
     assert "docker system prune" not in deploy
     assert "down -v" not in deploy
-    assert "wait_until_healthy" in deploy
-    assert "write_update_status" in deploy
 
 
 def test_installer_validates_getme_and_keeps_secrets_out_of_arguments() -> None:
     installer = (ROOT / "install.sh").read_text(encoding="utf-8")
     assert "getMe" in installer
     assert "read -r -s token" in installer
-    assert 'TELEGRAM_TOKEN="$token" python3' in installer
+    assert "--config -" in installer
     assert '-v value="$value"' not in installer
     assert "claim_" not in installer
     assert "docker system prune" not in installer

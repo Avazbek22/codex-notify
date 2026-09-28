@@ -25,8 +25,8 @@ chat. A stranger may still discover the public bot username, but cannot retrieve
 settings, history, device codes, or infer whether an owner is configured.
 
 The privileged updater runs separately on the host and is not reachable from Telegram. It follows
-the `deploy` branch, which CI advances without force only after Python, shell, and Docker jobs pass
-and only while the candidate SHA remains the newest `main`. Tracked local changes block deployment.
+`main` and deploys a commit only after its GitHub checks (Python, shell, and Docker jobs) have
+passed; CI itself has read-only repository access. Tracked local changes block deployment.
 The updater preserves the current `CODEX_HOME` and uses compatible JSON backups when a schema change
 must be rolled back.
 
