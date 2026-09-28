@@ -10,6 +10,8 @@ __pycache__
 data
 codex-home
 logs
+.deploy
+deploy.conf
 tests
 docs
 *.md

@@ -10,7 +10,7 @@
   practical deduplication, not a mathematical exactly-once guarantee.
 - Keep event detection network-independent and test baseline, ambiguity, account changes, nulls, and
   incomplete credit details.
-- Changes to installation, state schema, healthcheck, CI promotion, or rollback require deployment tests.
+- Changes to installation, state schema, healthcheck, the CI gate, or rollback require deployment tests.
 - Keep Codex pinned to the stable version documented in `docs/architecture.md` and verify the official
   release checksum during image build.
 - Keep English as the default and source language, with Russian in the centralized translation

@@ -44,24 +44,3 @@ jobs:
           context: .
           push: false
           tags: codex-notify:test
-
-  promote:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [python, container]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-      - name: Advance deploy only to the newest successfully checked main SHA
-        env:
-          CANDIDATE: ${{ github.sha }}
-        run: |
-          git fetch origin main deploy 2>/dev/null || git fetch origin main
-          test "$CANDIDATE" = "$(git rev-parse refs/remotes/origin/main)" || exit 0
-          if git show-ref --verify --quiet refs/remotes/origin/deploy; then
-            git merge-base --is-ancestor refs/remotes/origin/deploy "$CANDIDATE"
-          fi
-          git push origin "$CANDIDATE:refs/heads/deploy"

@@ -18,6 +18,7 @@ from .health import HealthReporter
 from .instance_lock import InstanceLock
 from .login import LoginManager
 from .monitor import Monitor
+from .poll_health import PollHealth
 from .storage import Repository, StorageRecoveryError
 from .telegram_ui import TelegramUI
 
@@ -92,6 +93,8 @@ async def async_main() -> None:
         return
 
     bot = Bot(config.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    poll_health = PollHealth()
+    bot.session.middleware(poll_health)
     rpc = CodexAppServer(
         config.codex_command, config.codex_home, request_timeout=config.rpc_timeout_seconds
     )
@@ -116,7 +119,7 @@ async def async_main() -> None:
             {
                 "scheduler": lambda: scheduler_task is not None and not scheduler_task.done(),
                 "delivery": lambda: delivery_task is not None and not delivery_task.done(),
-                "polling": lambda: True,
+                "polling": poll_health.healthy,
             },
         )
         health_task = asyncio.create_task(health.run(), name="health")

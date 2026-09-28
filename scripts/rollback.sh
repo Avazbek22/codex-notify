@@ -1,41 +1,84 @@
 #!/usr/bin/env bash
+# Puts the previous release back: its commit, the exact image it ran, and the
+# container. Automatic deployment then waits for the next push, and running
+# this script again returns to the release that was just replaced.
 set -Eeuo pipefail
 
 ROOT_DIR="${ROOT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
-cd "$ROOT_DIR"
-exec 9>/run/lock/codex-notify-update.lock
-flock -n 9 || { echo "Updater is already running" >&2; exit 1; }
-docker image inspect codex-notify:rollback >/dev/null
-latest_backup="$(find "$ROOT_DIR/data/backups" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' \
-  | sort -nr | head -n 1 | cut -d' ' -f2-)"
-[[ -n "$latest_backup" ]] || { echo "No rollback JSON backup" >&2; exit 1; }
-old_commit="${latest_backup##*-}"
-git cat-file -e "$old_commit^{commit}"
-[[ -z "$(git status --porcelain --untracked-files=no)" ]] \
-  || { echo "Tracked local changes prevent rollback" >&2; exit 1; }
-remote_deploy="$(git rev-parse refs/remotes/origin/deploy 2>/dev/null || true)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/lib-production.sh
+source "$SCRIPT_DIR/lib-production.sh"
 
-docker compose -p codex-notify -f "$ROOT_DIR/docker-compose.yml" stop -t 30 codex-notify
-old_max="$(docker run --rm --entrypoint python codex-notify:rollback -m codex_notify.admin max-schema)"
-live_max="$(python3 - "$ROOT_DIR/data/settings.json" "$ROOT_DIR/data/state.json" <<'PY'
-import json, sys
-print(max(json.load(open(path, encoding="utf-8"))["schema_version"] for path in sys.argv[1:]))
-PY
-)"
-if [[ "$live_max" -gt "$old_max" ]]; then
-  echo "Restoring pre-update JSON because the old application cannot read the live schema" >&2
-  install -m 600 "$latest_backup/settings.json" "$ROOT_DIR/data/settings.json"
-  install -m 600 "$latest_backup/state.json" "$ROOT_DIR/data/state.json"
-fi
-docker image tag codex-notify:rollback codex-notify:local
-git checkout -q -B deploy "$old_commit"
-docker compose -p codex-notify -f "$ROOT_DIR/docker-compose.yml" up -d --no-deps --force-recreate codex-notify
-if [[ -n "$remote_deploy" ]]; then
-  printf '%s\n' "$remote_deploy" >"$ROOT_DIR/data/.failed-deploy-sha"
-  chmod 600 "$ROOT_DIR/data/.failed-deploy-sha"
-fi
-printf '{"status":"rolled_back","commit":"%s","updated_at":"%s"}\n' \
-  "$old_commit" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >"$ROOT_DIR/data/.update-status.tmp"
-chmod 644 "$ROOT_DIR/data/.update-status.tmp"
-mv "$ROOT_DIR/data/.update-status.tmp" "$ROOT_DIR/data/update-status.json"
-echo "Rollback started; CODEX_HOME was preserved. Check docker compose logs and /diagnostics."
+usage() {
+  cat <<'USAGE'
+Usage: sudo bash scripts/rollback.sh [--yes]
+
+Returns the bot to the previous release. Use --yes to skip the confirmation.
+USAGE
+}
+
+main() {
+  local assume_yes=0 answer target
+  local current_commit current_image previous_commit previous_image
+  case "${1:-}" in
+    "") ;;
+    -y | --yes) assume_yes=1 ;;
+    -h | --help)
+      usage
+      return 0
+      ;;
+    *)
+      usage >&2
+      return 2
+      ;;
+  esac
+
+  require_root
+  resolve_app_slug
+  load_deploy_config
+  prepare_state_dir
+  open_log
+  acquire_lock 0 || die "Another deployment is running; try again in a minute"
+  validate_checkout || die "Automatic deployment is paused; fix the checkout first"
+  recover_interrupted_release
+  [[ -f "$(state_file previous)" ]] || die "No previous release is recorded yet"
+
+  current_commit="$(state_get current commit)"
+  current_image="$(state_get current image)"
+  previous_commit="$(state_get previous commit)"
+  previous_image="$(state_get previous image)"
+  [[ -n "$(image_id "$previous_image")" ]] ||
+    die "The image of the previous release is no longer available"
+  run_git cat-file -e "$previous_commit^{commit}" 2>/dev/null ||
+    die "Commit ${previous_commit:0:7} is no longer in the repository"
+
+  printf 'Running now:  %s %s\n' "${current_commit:0:7}" "$(commit_subject "$current_commit")"
+  printf 'Roll back to: %s %s\n' "${previous_commit:0:7}" "$(commit_subject "$previous_commit")"
+  if [[ "$assume_yes" != "1" ]]; then
+    [[ -t 0 ]] || die "Pass --yes when no terminal is attached"
+    read -r -p 'Continue? [y/N] ' answer
+    if [[ "${answer,,}" != "y" && "${answer,,}" != "yes" ]]; then
+      log "Rollback cancelled"
+      return 1
+    fi
+  fi
+
+  log "Rolling back from ${current_commit:0:7} to ${previous_commit:0:7}"
+  run_hook before_restore "$previous_image" || die "The before_restore hook failed"
+  if ! restore_release "$previous_commit" "$previous_image"; then
+    log "Rollback failed; returning to ${current_commit:0:7}"
+    restore_release "$current_commit" "$current_image" ||
+      log "ERROR: ${current_commit:0:7} did not come back either; the bot needs attention"
+    return 1
+  fi
+  swap_current_and_previous
+  run_hook after_rollback || log "WARNING: the after_rollback hook failed"
+
+  # Keep the timer from reinstalling what was just rolled back; the next push
+  # resumes automatic deployment.
+  target="$(run_git rev-parse --verify -q "refs/remotes/origin/$DEPLOY_BRANCH" || true)"
+  printf '%s\n' "${target:-$current_commit}" >"$(state_file failed-commit)"
+  log "Rolled back to ${previous_commit:0:7}. The next push is deployed as usual; sudo bash scripts/deploy.sh --retry redeploys ${target:0:7} now"
+}
+
+main "$@"

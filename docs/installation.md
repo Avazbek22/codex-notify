@@ -3,8 +3,8 @@
 ## First installation
 
 1. Create a Telegram bot with BotFather and keep its token private.
-2. Clone the CI-approved `deploy` branch and run `sudo ./install.sh`. The installer does not replace
-   an existing Docker installation or clean resources belonging to other projects.
+2. Clone the repository and run `sudo bash install.sh`. The installer does not replace an existing
+   Docker installation or clean resources belonging to other projects.
 3. Enter your numeric Telegram ID, or open the one-time binding link printed only in the interactive
    terminal. The link is valid for 15 minutes and should not be shared.
 4. In the owner private chat, choose **Account → Connect Codex**, open the official HTTPS page, and
@@ -33,25 +33,26 @@ restores an older `auth.json` automatically.
 ## Routine operations
 
 ```bash
+# Running release, previous release, and what automatic deployment waits for
+sudo bash scripts/status.sh
+
 # Follow logs
-docker compose -p codex-notify logs -f --tail=200
+docker compose logs -f --tail=200
 
-# Inspect the container
-docker compose -p codex-notify ps
+# Deploy the newest CI-approved commit now
+sudo bash scripts/deploy.sh
 
-# Check for a CI-approved update now
-sudo systemctl start codex-notify-update.service
-sudo journalctl -u codex-notify-update.service -n 100 --no-pager
-
-# Deliberately retry a previously failed SHA
-sudo FORCE_DEPLOY=1 ./scripts/deploy.sh
+# Deliberately retry a previously failed commit
+sudo bash scripts/deploy.sh --retry
 
 # Safely replace the Telegram token
-sudo ./scripts/change-token.sh
+sudo bash scripts/change-token.sh
 ```
 
-The default timer checks hourly with up to 15 minutes of randomized delay. The manual command above
-applies an already CI-approved update without waiting for the next timer run.
+`codex-notify-deploy.timer` checks `main` every two minutes and deploys a commit once its GitHub checks
+have passed; the manual command above only skips the wait for the next timer run. Every result is
+recorded in `data/update-status.json` and shown by `/diagnostics`. Settings such as the watch window
+live in `deploy.conf`.
 
 To reconnect, confirm **Account → Sign out of Codex**, then choose **Connect Codex**. Logout clears
 comparisons and queued notifications belonging to the previous Codex account. It does not change the
@@ -71,21 +72,25 @@ valid `.bak` automatically restores a corrupt primary while the corrupt file is 
 
 ## Manual rollback
 
-After a successful update, the previous image and pre-update JSON remain available locally:
+After a successful update, the previous release (its commit and exact image) and the pre-update JSON
+remain available locally:
 
 ```bash
-sudo ./scripts/rollback.sh
+sudo bash scripts/rollback.sh
 ```
 
 Rollback preserves the current `CODEX_HOME`. JSON is restored only when its schema is too new for the
-old image. The log warns that changes made after the backup can be lost in that case. The failed
-remote SHA remains blocked until a newer approved commit appears or an administrator deliberately
-uses `FORCE_DEPLOY=1`.
+old image. The log warns that changes made after the backup can be lost in that case. Running the
+command again returns to the release that was replaced. After a rollback the timer leaves the bot
+alone until the next push; `sudo bash scripts/deploy.sh --retry` deploys the newest commit again.
+
+A release that turns unhealthy within ten minutes after it started is rolled back the same way
+automatically.
 
 ## Removal without deleting data
 
 ```bash
-sudo systemctl disable --now codex-notify-update.timer
+sudo systemctl disable --now codex-notify-deploy.timer codex-notify-rebuild.timer
 docker compose -p codex-notify stop
 docker compose -p codex-notify rm -f
 ```
