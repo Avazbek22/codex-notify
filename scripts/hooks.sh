@@ -72,7 +72,7 @@ hook_before_start() {
 # Before an older image runs again, put back the pre-update JSON if the newer
 # release already migrated it to a schema the older image cannot read.
 hook_before_restore() {
-  local image="$1" backup old_max live
+  local image="$1" backup old_max live owner group
   app_compose stop -t 30 "$SERVICE_KEY" >/dev/null 2>&1 || true
   [[ -f "$ROOT_DIR/data/settings.json" ]] || return 0
   # When in doubt, leave the live JSON alone rather than roll it back.
@@ -88,8 +88,13 @@ hook_before_restore() {
     return 1
   fi
   log "The JSON schema is newer than the previous release supports; restoring the pre-update JSON from ${backup#"$ROOT_DIR"/}; changes made since then are lost"
-  install -m 600 "$backup/settings.json" "$ROOT_DIR/data/settings.json" || return 1
-  install -m 600 "$backup/state.json" "$ROOT_DIR/data/state.json" || return 1
+  # Keep the files owned by the bot user that owns data/, or it could not read them.
+  owner="$(stat -c '%u' "$ROOT_DIR/data")" || return 1
+  group="$(stat -c '%g' "$ROOT_DIR/data")" || return 1
+  install -m 600 -o "$owner" -g "$group" "$backup/settings.json" "$ROOT_DIR/data/settings.json" ||
+    return 1
+  install -m 600 -o "$owner" -g "$group" "$backup/state.json" "$ROOT_DIR/data/state.json" ||
+    return 1
 }
 
 hook_after_release() {

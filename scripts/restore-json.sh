@@ -18,7 +18,10 @@ recovery="$ROOT_DIR/data/backups/manual-before-restore-$(date -u '+%Y%m%dT%H%M%S
 install -d -m 700 "$recovery"
 install -m 600 "$ROOT_DIR/data/settings.json" "$recovery/settings.json"
 install -m 600 "$ROOT_DIR/data/state.json" "$recovery/state.json"
-install -m 600 "$BACKUP_DIR/settings.json" "$ROOT_DIR/data/settings.json"
-install -m 600 "$BACKUP_DIR/state.json" "$ROOT_DIR/data/state.json"
+# Keep the restored files owned by the bot user that owns data/, or it could not read them.
+owner="$(stat -c '%u' "$ROOT_DIR/data")"
+group="$(stat -c '%g' "$ROOT_DIR/data")"
+install -m 600 -o "$owner" -g "$group" "$BACKUP_DIR/settings.json" "$ROOT_DIR/data/settings.json"
+install -m 600 -o "$owner" -g "$group" "$BACKUP_DIR/state.json" "$ROOT_DIR/data/state.json"
 "${compose[@]}" up -d --no-deps --force-recreate codex-notify
 printf 'JSON restored. Codex auth directory was not changed. Previous JSON: %s\n' "$recovery"
